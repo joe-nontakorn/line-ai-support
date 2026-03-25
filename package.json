@@ -1,0 +1,22 @@
+{
+  "name": "line-it-support-bot",
+  "version": "1.0.0",
+  "description": "LINE Chat AI + Gemini for IT Support",
+  "type": "module",
+  "main": "src/app.js",
+  "scripts": {
+    "dev": "bun --watch src/app.js",
+    "start": "bun src/app.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "@line/bot-sdk": "^9.3.0",
+    "express": "^4.19.2",
+    "mongoose": "^8.7.0",
+    "dotenv": "^16.4.5",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21"
+  }
+}
