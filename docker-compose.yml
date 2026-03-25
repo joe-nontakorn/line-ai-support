@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: line-ai-support-app
+    restart: always
+    ports:
+      - "3002:3002"
+    env_file:
+      - .env
+    networks:
+      - jastel-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"    
+
+networks:
+  jastel-network:
+    external: true
