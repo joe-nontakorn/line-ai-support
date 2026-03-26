@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { IMessage } from '../models/Conversation.js';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY as string);
 
 const SYSTEM_PROMPT = `คุณเป็น AI Assistant สำหรับ IT Support ของบริษัท
 บทบาทของคุณคือช่วยแก้ปัญหาด้าน IT ให้กับพนักงาน
@@ -27,13 +28,21 @@ const SYSTEM_PROMPT = `คุณเป็น AI Assistant สำหรับ IT 
 
 ตอบเป็นภาษาไทย และกระชับ เข้าใจง่าย`;
 
+export interface GeminiAnalysisResult {
+  description: string;
+  response: string;
+}
+
 export class GeminiService {
+  private model: any;
+  private visionModel: any;
+
   constructor() {
     this.model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
     this.visionModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' }); // รองรับรูปภาพ
   }
 
-  async chat(conversationHistory) {
+  async chat(conversationHistory: IMessage[]): Promise<string> {
     try {
       // แยก history ออกจากข้อความล่าสุดเพื่อไม่ให้ส่งข้อความเดิมซ้ำในประวัติ
       const history = conversationHistory.slice(0, -1);
@@ -50,7 +59,7 @@ export class GeminiService {
             role: 'model',
             parts: [{ text: 'เข้าใจครับ ผมพร้อมช่วยเหลือเรื่อง IT Support ด้วยความยินดีครับ' }]
           },
-          ...history.map(msg => ({
+          ...history.map((msg: IMessage) => ({
             role: msg.role === 'assistant' ? 'model' : 'user',
             parts: [{ text: msg.content }]
           }))
@@ -71,7 +80,7 @@ export class GeminiService {
     }
   }
 
-  async analyzeImage(base64Image) {
+  async analyzeImage(base64Image: string): Promise<GeminiAnalysisResult> {
     try {
       const prompt = `${SYSTEM_PROMPT}
 
@@ -108,7 +117,7 @@ export class GeminiService {
     }
   }
 
-  async analyzePDF(base64PDF, fileName) {
+  async analyzePDF(base64PDF: string, fileName: string): Promise<GeminiAnalysisResult> {
     try {
       const prompt = `${SYSTEM_PROMPT}
 
@@ -145,18 +154,14 @@ export class GeminiService {
     }
   }
 
-  async analyzeIssue(conversationHistory) {
+  async analyzeIssue(conversationHistory: IMessage[]): Promise<string> {
     try {
       const messages = conversationHistory
-        .filter(msg => msg.role === 'user')
-        .map(msg => msg.content)
+        .filter((msg: IMessage) => msg.role === 'user')
+        .map((msg: IMessage) => msg.content)
         .join('\n');
 
-      const prompt = `จากการสนทนาต่อไปนี้ ช่วยสรุปปัญหาหลักที่ user กำลังเผชิญเป็นประโยคสั้นๆ (ไม่เกิน 1 บรรทัด):
-
-${messages}
-
-สรุปปัญหา:`;
+      const prompt = `จากการสนทนาต่อไปนี้ ช่วยสรุปปัญหาหลักที่ user กำลังเผชิญเป็นประโยคสั้นๆ (ไม่เกิน 1 บรรทัด):\n\n${messages}\n\nสรุปปัญหา:`;
 
       const result = await this.model.generateContent(prompt);
       const response = result.response;

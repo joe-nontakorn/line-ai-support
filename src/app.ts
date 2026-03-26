@@ -1,8 +1,8 @@
 import 'dotenv/config';
-import express from 'express';
-import { middleware } from '@line/bot-sdk';
+import express, { Request, Response, NextFunction } from 'express';
+import { middleware, WebhookEvent } from '@line/bot-sdk';
 import { Client } from '@line/bot-sdk';
-import connectDB from './config/database.js';
+import connectDB from './config/mongodb.js';
 import { LineService } from './services/line.js';
 import apiRoutes from './routes/api.js';
 
@@ -11,8 +11,8 @@ const PORT = process.env.PORT || 3000;
 
 // LINE Bot Configuration
 const lineConfig = {
-  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
-  channelSecret: process.env.LINE_CHANNEL_SECRET
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN as string,
+  channelSecret: process.env.LINE_CHANNEL_SECRET as string
 };
 
 const lineClient = new Client(lineConfig);
@@ -29,10 +29,10 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Health check
-app.get('/', (req, res) => {
+app.get('/', (req: Request, res: Response) => {
   res.json({
     status: 'ok',
-    service: 'LINE IT Support Bot',
+    service: 'LINE IT AI Support',
     timestamp: new Date().toISOString()
   });
 });
@@ -41,16 +41,21 @@ app.get('/', (req, res) => {
 app.use('/api', apiRoutes);
 
 // LINE Webhook
-app.post('/webhook', middleware(lineConfig), async (req, res) => {
+app.post('/webhook', middleware(lineConfig) as any, async (req: Request, res: Response) => {
   try {
-    const events = req.body.events;
-    
+    const events: WebhookEvent[] = req.body.events;
+
     await Promise.all(
-      events.map(async (event) => {
-        // รองรับ message event หลายประเภท
+      events.map(async (event: WebhookEvent) => {
         if (event.type === 'message') {
+          // ป้องกัน bot ทำงานกับข้อความใน group/room (ให้ bot ส่งข้อมูลไปเฉยๆ โดยไม่ตอบโต้ในกลุ่ม)
+          if (event.source.type === 'group' || event.source.type === 'room') {
+            console.log(`Received message in group/room. ID: ${(event.source as any).groupId || (event.source as any).roomId}`);
+            return;
+          }
+
           const messageType = event.message.type;
-          
+
           // รองรับ text, image, file
           if (['text', 'image', 'file'].includes(messageType)) {
             await lineService.handleMessage(event);
@@ -58,22 +63,25 @@ app.post('/webhook', middleware(lineConfig), async (req, res) => {
             // message type อื่นๆ ที่ไม่รองรับ
             console.log(`Unsupported message type: ${messageType}`);
           }
+        } else if (event.type === 'join') {
+          // เมื่อ Bot ถูกดึงเข้ากลุ่ม ให้พิมพ์ ID กลุ่มออกมาเพื่อนำไปใส่ ADMIN_GROUP_ID
+          console.log(`Bot joined a ${event.source.type}! ID: ${(event.source as any).groupId || (event.source as any).roomId}`);
         }
       })
     );
 
     res.json({ status: 'ok' });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Webhook error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       status: 'error',
-      message: error.message 
+      message: error.message
     });
   }
 });
 
 // Error handling middleware
-app.use((err, req, res, next) => {
+app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   console.error('Error:', err);
   res.status(500).json({
     success: false,

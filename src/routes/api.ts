@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import User from '../models/User.js';
 import Conversation from '../models/Conversation.js';
 
@@ -7,7 +7,7 @@ const router = express.Router();
 /**
  * GET /api/stats - สถิติรวมของระบบ
  */
-router.get('/stats', async (req, res) => {
+router.get('/stats', async (req: Request, res: Response) => {
   try {
     const totalUsers = await User.countDocuments();
     const totalConversations = await Conversation.countDocuments();
@@ -41,7 +41,7 @@ router.get('/stats', async (req, res) => {
         totalConversations,
         resolvedConversations,
         escalatedConversations,
-        resolutionRate: parseFloat(resolutionRate),
+        resolutionRate: parseFloat(resolutionRate as string),
         averageRating: parseFloat(avgRating.toFixed(2)),
         totalRatings
       }
@@ -63,23 +63,23 @@ router.get('/stats', async (req, res) => {
  *   - status: filter ตาม status
  *   - resolved: filter resolved true/false
  */
-router.get('/conversations', async (req, res) => {
+router.get('/conversations', async (req: Request, res: Response) => {
   try {
     const { 
-      limit = 50, 
-      skip = 0, 
+      limit = '50', 
+      skip = '0', 
       status, 
       resolved 
     } = req.query;
 
-    const filter = {};
+    const filter: any = {};
     if (status) filter.status = status;
     if (resolved !== undefined) filter.resolved = resolved === 'true';
 
     const conversations = await Conversation.find(filter)
       .sort({ createdAt: -1 })
-      .limit(parseInt(limit))
-      .skip(parseInt(skip))
+      .limit(parseInt(limit as string))
+      .skip(parseInt(skip as string))
       .lean();
 
     // ดึงข้อมูล user มาด้วย
@@ -105,9 +105,9 @@ router.get('/conversations', async (req, res) => {
         conversations: conversationsWithUsers,
         pagination: {
           total,
-          limit: parseInt(limit),
-          skip: parseInt(skip),
-          hasMore: (parseInt(skip) + parseInt(limit)) < total
+          limit: parseInt(limit as string),
+          skip: parseInt(skip as string),
+          hasMore: (parseInt(skip as string) + parseInt(limit as string)) < total
         }
       }
     });
@@ -123,7 +123,7 @@ router.get('/conversations', async (req, res) => {
 /**
  * GET /api/conversations/:sessionId - ดึง conversation เฉพาะ
  */
-router.get('/conversations/:sessionId', async (req, res) => {
+router.get('/conversations/:sessionId', async (req: Request, res: Response): Promise<any> => {
   try {
     const { sessionId } = req.params;
     
@@ -161,14 +161,14 @@ router.get('/conversations/:sessionId', async (req, res) => {
 /**
  * GET /api/users - ดึงรายการ users
  */
-router.get('/users', async (req, res) => {
+router.get('/users', async (req: Request, res: Response) => {
   try {
-    const { limit = 50, skip = 0 } = req.query;
+    const { limit = '50', skip = '0' } = req.query;
 
     const users = await User.find()
       .sort({ registeredAt: -1 })
-      .limit(parseInt(limit))
-      .skip(parseInt(skip))
+      .limit(parseInt(limit as string))
+      .skip(parseInt(skip as string))
       .lean();
 
     const total = await User.countDocuments();
@@ -179,9 +179,9 @@ router.get('/users', async (req, res) => {
         users,
         pagination: {
           total,
-          limit: parseInt(limit),
-          skip: parseInt(skip),
-          hasMore: (parseInt(skip) + parseInt(limit)) < total
+          limit: parseInt(limit as string),
+          skip: parseInt(skip as string),
+          hasMore: (parseInt(skip as string) + parseInt(limit as string)) < total
         }
       }
     });
@@ -197,9 +197,9 @@ router.get('/users', async (req, res) => {
 /**
  * GET /api/issues - สรุปปัญหาที่พบบ่อย
  */
-router.get('/issues', async (req, res) => {
+router.get('/issues', async (req: Request, res: Response) => {
   try {
-    const { limit = 10 } = req.query;
+    const { limit = '10' } = req.query;
 
     const issues = await Conversation.aggregate([
       { $match: { issue: { $ne: '' } } },
@@ -217,7 +217,7 @@ router.get('/issues', async (req, res) => {
         }
       },
       { $sort: { count: -1 } },
-      { $limit: parseInt(limit) }
+      { $limit: parseInt(limit as string) }
     ]);
 
     res.json({
@@ -243,7 +243,7 @@ router.get('/issues', async (req, res) => {
 /**
  * GET /api/ratings - กระจายของ ratings
  */
-router.get('/ratings', async (req, res) => {
+router.get('/ratings', async (req: Request, res: Response) => {
   try {
     const ratingDistribution = await Conversation.aggregate([
       { $match: { rating: { $ne: null } } },
@@ -252,8 +252,7 @@ router.get('/ratings', async (req, res) => {
           _id: '$rating',
           count: { $sum: 1 }
         }
-      },
-      { $sort: { _id: 1 } }
+      }
     ]);
 
     const distribution = [1, 2, 3, 4, 5].map(rating => {

@@ -10,4 +10,4 @@ RUN bun install
 COPY . .
 
 # สั่งรันแอป
-CMD ["bun", "run", "src/app.js"]
+CMD ["bun", "run", "src/app.ts"]

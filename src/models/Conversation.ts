@@ -1,6 +1,26 @@
-import mongoose from 'mongoose';
+import mongoose, { Document, Schema } from 'mongoose';
 
-const messageSchema = new mongoose.Schema({
+export interface IMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: Date;
+}
+
+export interface IConversation extends Document {
+  lineUserId: string;
+  sessionId: string;
+  messages: IMessage[];
+  issue: string;
+  resolved: boolean;
+  rating: number | null;
+  feedback: string;
+  escalated: boolean;
+  status: 'active' | 'waiting_rating' | 'closed';
+  createdAt: Date;
+  closedAt: Date | null;
+}
+
+const messageSchema = new Schema<IMessage>({
   role: {
     type: String,
     enum: ['user', 'assistant', 'system'],
@@ -16,7 +36,7 @@ const messageSchema = new mongoose.Schema({
   }
 }, { _id: false });
 
-const conversationSchema = new mongoose.Schema({
+const conversationSchema = new Schema<IConversation>({
   lineUserId: {
     type: String,
     required: true,
@@ -72,4 +92,4 @@ const conversationSchema = new mongoose.Schema({
 conversationSchema.index({ lineUserId: 1, createdAt: -1 });
 conversationSchema.index({ status: 1 });
 
-export default mongoose.model('Conversation', conversationSchema);
+export default mongoose.model<IConversation>('Conversation', conversationSchema);

@@ -1,19 +1,38 @@
 import User from '../models/User.js';
-import Conversation from '../models/Conversation.js';
+import Conversation, { IConversation } from '../models/Conversation.js';
 import geminiService from './gemini.js';
 import { v4 as uuidv4 } from 'uuid';
+import { Client, MessageEvent, TextEventMessage, ImageEventMessage, FileEventMessage } from '@line/bot-sdk';
 
 // เก็บสถานะการลงทะเบียนของ user ชั่วคราว
-const registrationStates = new Map();
+interface RegistrationState {
+  step: number;
+  name?: string;
+  employeeId?: string;
+  department?: string;
+}
+const registrationStates = new Map<string, RegistrationState>();
 
 export class LineService {
-  constructor(lineClient) {
+  private client: Client;
+
+  constructor(lineClient: Client) {
     this.client = lineClient;
   }
 
-  async handleMessage(event) {
-    const { replyToken, source, message } = event;
-    const userId = source.userId;
+  async handleMessage(event: MessageEvent): Promise<any> {
+    const replyToken = event.replyToken;
+    const source = event.source;
+    
+    // Type narrowing for source.userId
+    const userId = source.type === 'user' ? source.userId : (source.type === 'group' ? source.userId : undefined);
+    
+    if (!userId) {
+      console.warn('No userId found in event source');
+      return;
+    }
+
+    const message = event.message;
 
     try {
       // ตรวจสอบว่า user ลงทะเบียนแล้วหรือยัง
@@ -24,7 +43,7 @@ export class LineService {
         if (message.type !== 'text') {
           return await this.replyMessage(replyToken, 'กรุณาลงทะเบียนด้วยข้อความก่อนนะครับ');
         }
-        return await this.handleRegistration(replyToken, userId, message.text);
+        return await this.handleRegistration(replyToken, userId, (message as TextEventMessage).text);
       }
 
       // ตรวจสอบว่า user กำลังให้ rating อยู่หรือไม่
@@ -37,19 +56,19 @@ export class LineService {
         if (message.type !== 'text') {
           return await this.replyMessage(replyToken, 'กรุณาให้คะแนนเป็นตัวเลข 1-5 ครับ');
         }
-        return await this.handleRating(replyToken, userId, message.text, waitingRatingConv);
+        return await this.handleRating(replyToken, userId, (message as TextEventMessage).text, waitingRatingConv);
       }
 
       // จัดการ message แต่ละประเภท
       switch (message.type) {
         case 'text':
-          return await this.handleTextMessage(replyToken, userId, message.text);
+          return await this.handleTextMessage(replyToken, userId, (message as TextEventMessage).text);
 
         case 'image':
-          return await this.handleImageMessage(replyToken, userId, message);
+          return await this.handleImageMessage(replyToken, userId, message as ImageEventMessage);
 
         case 'file':
-          return await this.handleFileMessage(replyToken, userId, message);
+          return await this.handleFileMessage(replyToken, userId, message as FileEventMessage);
 
         default:
           return await this.replyMessage(replyToken, 'ขออภัยครับ รองรับเฉพาะข้อความ, รูปภาพ และไฟล์ PDF เท่านั้น');
@@ -60,7 +79,7 @@ export class LineService {
     }
   }
 
-  async handleTextMessage(replyToken, userId, text) {
+  async handleTextMessage(replyToken: string, userId: string, text: string): Promise<any> {
     // จัดการคำสั่งพิเศษ
     if (text === '/start' || text === 'เริ่มสนทนาใหม่') {
       return await this.startNewConversation(replyToken, userId);
@@ -70,7 +89,12 @@ export class LineService {
       return await this.showHelp(replyToken);
     }
 
-    if (text.includes('ติดต่อเจ้าหน้าที่') || text.includes('escalate')) {
+    const escalateKeywords = [
+      'ติดต่อเจ้าหน้าที่', 'escalate', 'ติดต่อit', 'ติดต่อ it',
+      'เรียกit', 'เรียก it', 'คุยกับคน', 'คุยกับเจ้าหน้าที่',
+      'แจ้งit', 'แจ้ง it', 'เรียกแอดมิน', 'เรียก admin'
+    ];
+    if (escalateKeywords.some(keyword => text.toLowerCase().includes(keyword))) {
       return await this.escalateToSupport(replyToken, userId);
     }
 
@@ -78,14 +102,14 @@ export class LineService {
     return await this.handleConversation(replyToken, userId, text);
   }
 
-  async handleImageMessage(replyToken, userId, message) {
+  async handleImageMessage(replyToken: string, userId: string, message: ImageEventMessage): Promise<any> {
     try {
       // ดาวน์โหลดรูปภาพจาก LINE
       const imageBuffer = await this.client.getMessageContent(message.id);
-      const chunks = [];
+      const chunks: Buffer[] = [];
 
-      for await (const chunk of imageBuffer) {
-        chunks.push(chunk);
+      for await (const chunk of imageBuffer as any) {
+        chunks.push(chunk as Buffer);
       }
 
       const imageData = Buffer.concat(chunks);
@@ -132,7 +156,7 @@ export class LineService {
     }
   }
 
-  async handleFileMessage(replyToken, userId, message) {
+  async handleFileMessage(replyToken: string, userId: string, message: FileEventMessage): Promise<any> {
     try {
       // ตรวจสอบว่าเป็น PDF หรือไม่
       const fileName = message.fileName || '';
@@ -142,10 +166,10 @@ export class LineService {
 
       // ดาวน์โหลดไฟล์จาก LINE
       const fileBuffer = await this.client.getMessageContent(message.id);
-      const chunks = [];
+      const chunks: Buffer[] = [];
 
-      for await (const chunk of fileBuffer) {
-        chunks.push(chunk);
+      for await (const chunk of fileBuffer as any) {
+        chunks.push(chunk as Buffer);
       }
 
       const fileData = Buffer.concat(chunks);
@@ -192,7 +216,7 @@ export class LineService {
     }
   }
 
-  async handleRegistration(replyToken, userId, text) {
+  async handleRegistration(replyToken: string, userId: string, text: string): Promise<any> {
     const state = registrationStates.get(userId) || { step: 0 };
 
     if (state.step === 0) {
@@ -235,7 +259,7 @@ export class LineService {
     }
   }
 
-  async handleConversation(replyToken, userId, text) {
+  async handleConversation(replyToken: string, userId: string, text: string): Promise<any> {
     // หา conversation ที่กำลัง active อยู่
     let conversation = await Conversation.findOne({
       lineUserId: userId,
@@ -287,7 +311,7 @@ export class LineService {
     return await this.replyMessage(replyToken, aiResponse);
   }
 
-  async handleRating(replyToken, userId, text, conversation) {
+  async handleRating(replyToken: string, userId: string, text: string, conversation: IConversation): Promise<any> {
     if (text === 'แก้ได้แล้ว') {
       conversation.resolved = true;
       conversation.status = 'waiting_rating';
@@ -330,12 +354,17 @@ export class LineService {
     return await this.replyMessage(replyToken, 'กรุณาเลือกคะแนน 1-5 ดาว');
   }
 
-  async escalateToSupport(replyToken, userId) {
+  async escalateToSupport(replyToken: string, userId: string): Promise<any> {
+    // หาผู้ใช้งานอิงตาม userId
+    const user = await User.findOne({ lineUserId: userId });
+
     // อัพเดท conversation
     const conversation = await Conversation.findOne({
       lineUserId: userId,
       status: { $in: ['active', 'waiting_rating'] }
     }).sort({ createdAt: -1 });
+
+    let issueSummary = 'ไม่ระบุปัญหา';
 
     if (conversation) {
       conversation.escalated = true;
@@ -343,26 +372,39 @@ export class LineService {
       conversation.status = 'closed';
       conversation.closedAt = new Date();
       await conversation.save();
+      issueSummary = conversation.issue;
     }
 
-    const itSupportUrl = process.env.IT_SUPPORT_LINE_URL || 'https://line.me/ti/p/your-it-support';
+    // ส่งข้อความไปที่ Group ของ Admin
+    const adminGroupId = process.env.ADMIN_GROUP_ID;
+    if (adminGroupId && user) {
+      const adminMessage = `🚨 แจ้งเตือนปัญหาใหม่!\n\nผู้แจ้ง: ${user.name}\nรหัสพนักงาน: ${user.employeeId}\nแผนก: ${user.department}\n\nปัญหาที่พบ:\n${issueSummary}`;
+      try {
+        await this.client.pushMessage(adminGroupId, {
+          type: 'text',
+          text: adminMessage
+        });
+      } catch (error) {
+        console.error('Error sending message to admin group:', error);
+      }
+    } else {
+      console.warn('ADMIN_GROUP_ID is not set in environment or user not found.');
+    }
 
     return await this.replyMessage(
       replyToken,
-      `เข้าใจครับ ให้ผมส่งต่อไปยังเจ้าหน้าที่ IT Support\n\nกรุณาติดต่อที่:\n${itSupportUrl}\n\n` +
-      `หรือสามารถโทร: 02-XXX-XXXX\nอีเมล: [email protected]\n\n` +
-      `ทีมงานจะติดต่อกลับโดยเร็วที่สุดครับ 🙏`
+      `ระบบได้ส่งเรื่องของ ${user ? 'คุณ ' + user.name : 'คุณ'} ไปยังเจ้าหน้าที่ IT Support เรียบร้อยแล้วครับ\n\nเจ้าหน้าที่จะรีบตรวจสอบและติดต่อกลับโดยเร็วที่สุดครับ 🙏`
     );
   }
 
-  async startNewConversation(replyToken, userId) {
+  async startNewConversation(replyToken: string, userId: string): Promise<any> {
     return await this.replyMessage(
       replyToken,
       'เริ่มการสนทนาใหม่\n\nมีอะไรให้ช่วยไหมครับ? 😊'
     );
   }
 
-  async showHelp(replyToken) {
+  async showHelp(replyToken: string): Promise<any> {
     const helpText = `📋 คำแนะนำการใช้งาน
 
 🔹 สอบถามปัญหา IT ได้เลย เช่น:
@@ -381,14 +423,14 @@ export class LineService {
     return await this.replyMessage(replyToken, helpText);
   }
 
-  async replyMessage(replyToken, text) {
+  async replyMessage(replyToken: string, text: string): Promise<any> {
     return await this.client.replyMessage(replyToken, {
       type: 'text',
       text
     });
   }
 
-  async replyMessageWithQuickReply(replyToken, text, quickReplyItems) {
+  async replyMessageWithQuickReply(replyToken: string, text: string, quickReplyItems: Array<{label: string, text: string}>): Promise<any> {
     return await this.client.replyMessage(replyToken, {
       type: 'text',
       text,
