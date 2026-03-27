@@ -1,3 +1,4 @@
+// User.ts
 import mongoose, { Document, Schema } from 'mongoose';
 
 export interface IUser extends Document {
@@ -5,6 +6,8 @@ export interface IUser extends Document {
   name: string;
   employeeId: string;
   department: string;
+  email?: string;
+  phone?: string;
   registeredAt: Date;
   isActive: boolean;
 }
@@ -27,6 +30,14 @@ const userSchema = new Schema<IUser>({
   department: {
     type: String,
     required: true
+  },
+  email: {
+    type: String,
+    required: false
+  },
+  phone: {
+    type: String,
+    required: false
   },
   registeredAt: {
     type: Date,

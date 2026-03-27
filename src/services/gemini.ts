@@ -1,7 +1,35 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { IMessage } from '../models/Conversation.js';
+// service/gemini.ts
+import { GoogleGenerativeAI, GenerativeModel } from '@google/generative-ai';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY as string);
+export type MessageRole = 'user' | 'assistant';
+
+export interface IMessage {
+  role: MessageRole;
+  content: string;
+  timestamp?: Date;
+}
+
+export type ParsedResponseType = 'IT_PROBLEM' | 'IT_INFO' | 'OUT_OF_SCOPE';
+
+export interface GeminiAnalysisResult {
+  description: string;
+  response: string;
+}
+
+export interface ParsedGeminiResponse {
+  content: string;
+  type: ParsedResponseType;
+}
+
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+
+if (!GEMINI_API_KEY) {
+  throw new Error('Missing GEMINI_API_KEY');
+}
+
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+
+const MODEL_NAME = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview';
 
 const SYSTEM_PROMPT = `คุณเป็น AI Assistant สำหรับ IT Support ของบริษัท
 บทบาทของคุณคือช่วยแก้ปัญหาด้าน IT ให้กับพนักงาน
@@ -35,79 +63,168 @@ const SYSTEM_PROMPT = `คุณเป็น AI Assistant สำหรับ IT 
 - [[TYPE:IT_INFO]] หากเป็นการตอบคำถามให้ข้อมูลทั่วไปเกี่ยวกับ IT (ไม่ได้แก้ปัญหา)
 - [[TYPE:OUT_OF_SCOPE]] หากเป็นคำถามนอกเรื่องที่ไม่เกี่ยวกับ IT`;
 
-export interface GeminiAnalysisResult {
-  description: string;
-  response: string;
-}
-
 export class GeminiService {
-  private model: any;
-  private visionModel: any;
+  private model: GenerativeModel;
+  private visionModel: GenerativeModel;
+  private readonly maxChatHistoryMessages = 20;
+  private readonly maxIssueAnalysisChars = 12000;
 
   constructor() {
-    this.model = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite-preview' });
-    this.visionModel = genAI.getGenerativeModel({ model: 'gemini-3.1-flash-lite-preview' }); // Gemini 3.1 is multimodal
+    this.model = genAI.getGenerativeModel({ model: MODEL_NAME });
+    this.visionModel = genAI.getGenerativeModel({ model: MODEL_NAME });
   }
 
-  private async retryWithBackoff<T>(fn: () => Promise<T>, retries = 3, delay = 2000): Promise<T> {
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private isRetryableError(error: unknown): boolean {
+    const err = error as { status?: number; message?: string };
+    const status = err?.status;
+    const message = err?.message || '';
+
+    return (
+      status === 429 ||
+      status === 500 ||
+      status === 502 ||
+      status === 503 ||
+      status === 504 ||
+      message.includes('429') ||
+      message.toLowerCase().includes('rate limit') ||
+      message.toLowerCase().includes('overloaded') ||
+      message.toLowerCase().includes('timeout')
+    );
+  }
+
+  private async retryWithBackoff<T>(
+    fn: () => Promise<T>,
+    retries = 3,
+    delayMs = 1500,
+  ): Promise<T> {
     try {
       return await fn();
-    } catch (error: any) {
-      if (retries > 0 && (error.status === 429 || error.message?.includes('429'))) {
-        console.log(`Gemini API 429 error, retrying in ${delay}ms... (${retries} retries left)`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        return this.retryWithBackoff(fn, retries - 1, delay * 2);
+    } catch (error) {
+      if (retries > 0 && this.isRetryableError(error)) {
+        console.warn(`Gemini retry in ${delayMs}ms (${retries} retries left)`);
+        await this.sleep(delayMs);
+        return this.retryWithBackoff(fn, retries - 1, delayMs * 2);
       }
       throw error;
     }
   }
 
+  private withTimeout<T>(promise: Promise<T>, timeoutMs = 30000): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`Gemini request timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      promise
+        .then((result) => {
+          clearTimeout(timer);
+          resolve(result);
+        })
+        .catch((error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+    });
+  }
+
+  private sanitizeText(text: string): string {
+    return text.replace(/\u0000/g, '').trim();
+  }
+
+  private normalizeType(rawType?: string): ParsedResponseType {
+    const value = (rawType || '').trim().toUpperCase();
+
+    if (value === 'IT_INFO') return 'IT_INFO';
+    if (value === 'OUT_OF_SCOPE') return 'OUT_OF_SCOPE';
+    return 'IT_PROBLEM';
+  }
+
+  private trimConversationHistory(history: IMessage[]): IMessage[] {
+    if (history.length <= this.maxChatHistoryMessages) {
+      return history;
+    }
+    return history.slice(-this.maxChatHistoryMessages);
+  }
+
+  private toGeminiHistory(messages: IMessage[]) {
+    return messages.map((msg) => ({
+      role: msg.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: this.sanitizeText(msg.content) }],
+    }));
+  }
+
+  parseResponse(aiResponse: string): ParsedGeminiResponse {
+    const typeMatch = aiResponse.match(/\[\[TYPE:(.*?)\]\]/i);
+    const type = this.normalizeType(typeMatch?.[1]);
+    const content = aiResponse.replace(/\[\[TYPE:.*?\]\]/gi, '').trim();
+
+    return {
+      content: content || 'ขออภัยครับ ไม่สามารถสร้างคำตอบได้ในขณะนี้',
+      type,
+    };
+  }
+
   async chat(conversationHistory: IMessage[]): Promise<string> {
     return this.retryWithBackoff(async () => {
       try {
-        // แยก history ออกจากข้อความล่าสุดเพื่อไม่ให้ส่งข้อความเดิมซ้ำในประวัติ
-        const history = conversationHistory.slice(0, -1);
-        const lastMessage = conversationHistory[conversationHistory.length - 1];
+        const sanitizedHistory = this.trimConversationHistory(
+          conversationHistory
+            .map((msg) => ({
+              role: msg.role,
+              content: this.sanitizeText(msg.content),
+              timestamp: msg.timestamp,
+            }))
+            .filter((msg) => msg.content.length > 0),
+        );
 
-        // แปลง conversation history เป็นรูปแบบที่ Gemini ต้องการ
+        if (sanitizedHistory.length === 0) {
+          return 'กรุณาระบุปัญหาด้าน IT ที่ต้องการความช่วยเหลือครับ [[TYPE:IT_PROBLEM]]';
+        }
+
+        const history = sanitizedHistory.slice(0, -1);
+        const lastMessage = sanitizedHistory[sanitizedHistory.length - 1];
+
         const chat = this.model.startChat({
           history: [
             {
               role: 'user',
-              parts: [{ text: SYSTEM_PROMPT }]
+              parts: [{ text: SYSTEM_PROMPT }],
             },
             {
               role: 'model',
-              parts: [{ text: 'เข้าใจครับ ผมพร้อมช่วยเหลือเรื่อง IT Support ด้วยความยินดีครับ' }]
+              parts: [{ text: 'เข้าใจครับ ผมพร้อมช่วยเหลือเรื่อง IT Support ด้วยความยินดีครับ [[TYPE:IT_INFO]]' }],
             },
-            ...history.map((msg: IMessage) => ({
-              role: msg.role === 'assistant' ? 'model' : 'user',
-              parts: [{ text: msg.content }]
-            }))
+            ...this.toGeminiHistory(history),
           ],
           generationConfig: {
             maxOutputTokens: 2048,
-            temperature: 0.7,
+            temperature: 0.4,
           },
         });
 
-        const result = await chat.sendMessage(lastMessage.content);
-        const response = result.response;
+        const result = await this.withTimeout(chat.sendMessage(lastMessage.content), 30000);
+        const responseText = result.response.text()?.trim();
 
-        return response.text();
+        if (!responseText) {
+          return 'ขออภัยครับ ไม่สามารถประมวลผลคำตอบได้ในขณะนี้ กรุณาลองใหม่อีกครั้ง [[TYPE:IT_PROBLEM]]';
+        }
+
+        const parsed = this.parseResponse(responseText);
+
+        if (!/\[\[TYPE:.*?\]\]/i.test(responseText)) {
+          return `${parsed.content} [[TYPE:${parsed.type}]]`;
+        }
+
+        return responseText;
       } catch (error) {
-        console.error('Gemini API Error:', error);
-        throw error;
+        console.error('Gemini chat error:', error);
+        return 'ขออภัยครับ ระบบ AI ไม่สามารถตอบคำถามได้ในขณะนี้ กรุณาลองใหม่อีกครั้ง หรือติดต่อ IT Support [[TYPE:IT_PROBLEM]]';
       }
     });
-  }
-
-  // Helper เพื่อดึงเอาหมวดหมู่จาก AI Response และตัดออกเพื่อให้ User ไม่เห็น
-  parseResponse(aiResponse: string): { content: string, type: string } {
-    const typeMatch = aiResponse.match(/\[\[TYPE:(.*?)\]\]/);
-    const type = typeMatch ? typeMatch[1] : 'IT_PROBLEM'; // default เป็นปัญหา
-    const content = aiResponse.replace(/\[\[TYPE:.*?\]\]/, '').trim();
-    return { content, type };
   }
 
   async analyzeImage(base64Image: string): Promise<GeminiAnalysisResult> {
@@ -117,33 +234,40 @@ export class GeminiService {
 
 คุณได้รับรูปภาพจาก user ที่เกี่ยวข้องกับปัญหา IT
 
-กรุณาวิเคราะห์รูปภาพและ:
-1. อธิบายว่าเห็นอะไรในรูป (error message, หน้าจอ, อุปกรณ์)
-2. ระบุปัญหาที่พบ
-3. ให้คำแนะนำวิธีแก้ไขแบบ step-by-step
+กรุณาวิเคราะห์รูปภาพและตอบเป็นภาษาไทย โดยจัดรูปแบบดังนี้:
+1. สรุปว่าเห็นอะไรในภาพ
+2. ระบุปัญหาที่เป็นไปได้
+3. แนะนำวิธีแก้แบบเป็นขั้นตอน
+4. ถ้าข้อมูลยังไม่พอ ให้บอกว่าควรถ่ายภาพมุมไหนเพิ่มหรือควรส่งข้อมูลอะไรเพิ่ม
 
-ตอบเป็นภาษาไทย กระชับ และเข้าใจง่าย`;
+ห้ามตอบนอกเรื่อง และไม่ต้องใส่แท็ก [[TYPE:...]]`;
 
         const imagePart = {
           inlineData: {
             data: base64Image,
-            mimeType: 'image/jpeg' // LINE ส่งมาเป็น JPEG
-          }
+            mimeType: 'image/jpeg',
+          },
         };
 
-        const result = await this.visionModel.generateContent([prompt, imagePart]);
-        const response = result.response;
-        const text = response.text();
+        const result = await this.withTimeout(
+          this.visionModel.generateContent([prompt, imagePart]),
+          30000,
+        );
+
+        const text = result.response.text()?.trim();
 
         return {
           description: 'รูปภาพแสดงปัญหา IT',
-          response: text
+          response:
+            text ||
+            'ขออภัยครับ ไม่สามารถวิเคราะห์รูปภาพได้ในขณะนี้\n\nกรุณาลองส่งภาพใหม่ที่ชัดขึ้น หรือพิมพ์อธิบายอาการเพิ่มเติมครับ',
         };
       } catch (error) {
-        console.error('Image analysis error:', error);
+        console.error('Gemini image analysis error:', error);
         return {
           description: 'ไม่สามารถวิเคราะห์รูปภาพได้',
-          response: 'ขออภัยครับ ไม่สามารถวิเคราะห์รูปภาพได้ในขณะนี้\n\nกรุณาลองอธิบายปัญหาเป็นข้อความแทน หรือถ่ายรูปใหม่ให้ชัดเจนขึ้น'
+          response:
+            'ขออภัยครับ ไม่สามารถวิเคราะห์รูปภาพได้ในขณะนี้\n\nกรุณาลองอธิบายปัญหาเป็นข้อความแทน หรือส่งภาพใหม่ที่ชัดเจนขึ้นครับ',
         };
       }
     });
@@ -156,33 +280,40 @@ export class GeminiService {
 
 คุณได้รับไฟล์ PDF ชื่อ "${fileName}" จาก user ที่เกี่ยวข้องกับปัญหา IT
 
-กรุณาวิเคราะห์เอกสาร PDF และ:
-1. สรุปเนื้อหาหลักที่เกี่ยวข้องกับปัญหา
-2. ระบุ error message หรือข้อมูลสำคัญ (ถ้ามี)
-3. ให้คำแนะนำการแก้ไขแบบ step-by-step
+กรุณาวิเคราะห์เอกสารนี้และตอบเป็นภาษาไทย โดยจัดรูปแบบดังนี้:
+1. สรุปว่าเอกสารนี้เกี่ยวกับอะไร
+2. ระบุ error message / code / ข้อความสำคัญที่พบ
+3. แนะนำวิธีแก้ไขแบบเป็นขั้นตอน
+4. ถ้าไฟล์นี้ไม่พอสำหรับวิเคราะห์ ให้บอกว่าต้องการข้อมูลอะไรเพิ่ม
 
-ตอบเป็นภาษาไทย กระชับ และเข้าใจง่าย`;
+ห้ามตอบนอกเรื่อง และไม่ต้องใส่แท็ก [[TYPE:...]]`;
 
         const pdfPart = {
           inlineData: {
             data: base64PDF,
-            mimeType: 'application/pdf'
-          }
+            mimeType: 'application/pdf',
+          },
         };
 
-        const result = await this.visionModel.generateContent([prompt, pdfPart]);
-        const response = result.response;
-        const text = response.text();
+        const result = await this.withTimeout(
+          this.visionModel.generateContent([prompt, pdfPart]),
+          40000,
+        );
+
+        const text = result.response.text()?.trim();
 
         return {
           description: `ไฟล์ PDF: ${fileName}`,
-          response: text
+          response:
+            text ||
+            'ขออภัยครับ ไม่สามารถอ่านไฟล์ PDF ได้ในขณะนี้\n\nกรุณาตรวจสอบว่าไฟล์ไม่ถูกเข้ารหัส และลองส่งใหม่อีกครั้งครับ',
         };
       } catch (error) {
-        console.error('PDF analysis error:', error);
+        console.error('Gemini PDF analysis error:', error);
         return {
           description: `ไฟล์ PDF: ${fileName}`,
-          response: 'ขออภัยครับ ไม่สามารถอ่านไฟล์ PDF ได้ในขณะนี้\n\nกรุณา:\n1. ตรวจสอบว่าไฟล์ไม่ได้ล็อกด้วยรหัสผ่าน\n2. ลองแปลงเป็นรูปภาพ (screenshot) แทน\n3. หรืออธิบายปัญหาเป็นข้อความ'
+          response:
+            'ขออภัยครับ ไม่สามารถอ่านไฟล์ PDF ได้ในขณะนี้\n\nกรุณา:\n1. ตรวจสอบว่าไฟล์ไม่ถูกล็อกด้วยรหัสผ่าน\n2. ลองส่งหน้าเอกสารที่สำคัญเป็นรูปภาพ\n3. หรือพิมพ์อธิบายปัญหาเป็นข้อความเพิ่มเติมครับ',
         };
       }
     });
@@ -191,19 +322,58 @@ export class GeminiService {
   async analyzeIssue(conversationHistory: IMessage[]): Promise<string> {
     return this.retryWithBackoff(async () => {
       try {
-        const messages = conversationHistory
-          .filter((msg: IMessage) => msg.role === 'user')
-          .map((msg: IMessage) => msg.content)
-          .join('\n');
+        const userMessages = conversationHistory
+          .filter((msg) => msg.role === 'user')
+          .map((msg) => this.sanitizeText(msg.content))
+          .filter(Boolean);
 
-        const prompt = `จากการสนทนาต่อไปนี้ ช่วยสรุปปัญหาหลักที่ user กำลังเผชิญเป็นประโยคสั้นๆ (ไม่เกิน 1 บรรทัด):\n\n${messages}\n\nสรุปปัญหา:`;
+        if (userMessages.length === 0) {
+          return 'ไม่สามารถสรุปปัญหาได้';
+        }
 
-        const result = await this.model.generateContent(prompt);
-        const response = result.response;
+        let messages = userMessages.join('\n');
+        if (messages.length > this.maxIssueAnalysisChars) {
+          messages = messages.slice(-this.maxIssueAnalysisChars);
+        }
 
-        return response.text().trim();
+        const prompt = `จากบทสนทนาต่อไปนี้ กรุณาประเมินว่าเป็นปัญหาที่เกี่ยวข้องกับ IT หรือไม่
+
+ตัวอย่างเรื่องที่ถือว่าเกี่ยวกับ IT:
+- คอมพิวเตอร์
+- อินเทอร์เน็ต
+- Wi-Fi
+- VPN
+- อีเมล
+- โปรแกรม
+- Printer
+- Scanner
+- ระบบเครือข่าย
+- บัญชีผู้ใช้
+- สิทธิ์การเข้าใช้งานระบบ
+
+บทสนทนา:
+${messages}
+
+กติกาการตอบ:
+- ถ้าเกี่ยวข้องกับ IT: สรุปปัญหาหลักเป็นประโยคสั้น ๆ ภาษาไทย ไม่เกิน 1 บรรทัด
+- ถ้าไม่เกี่ยวข้องกับ IT: ตอบเพียงคำเดียวว่า NON_IT_ISSUE
+- ห้ามอธิบายเพิ่ม
+- ห้ามขึ้นหลายบรรทัด`;
+
+        const result = await this.withTimeout(
+          this.model.generateContent(prompt),
+          20000,
+        );
+
+        const text = result.response.text()?.trim();
+
+        if (!text) {
+          return 'ไม่สามารถสรุปปัญหาได้';
+        }
+
+        return text;
       } catch (error) {
-        console.error('Issue analysis error:', error);
+        console.error('Gemini issue analysis error:', error);
         return 'ไม่สามารถสรุปปัญหาได้';
       }
     });

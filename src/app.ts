@@ -24,32 +24,57 @@ connectDB().catch(err => {
   process.exit(1);
 });
 
-// LINE Webhook ต้องอยู่ก่อน express.json() เพื่อให้ middleware สามารถอ่าน raw body ไปตรวจสอบ signature ได้
-app.post('/webhook', middleware(lineConfig) as any, async (req: Request, res: Response) => {
+import crypto from 'crypto';
+
+// LINE Webhook route
+app.post('/webhook', express.raw({ type: 'application/json' }), async (req: Request, res: Response) => {
   try {
-    const events: WebhookEvent[] = req.body.events;
+    // Manual signature validation to avoid generic raw-body issues in Bun
+    const signature = req.headers['x-line-signature'] as string;
+    const channelSecret = lineConfig.channelSecret;
+    const body = req.body; // Buffer from express.raw()
+    
+    if (!signature) {
+      res.status(401).send('Signature missing');
+      return;
+    }
+
+    const expectedSignature = crypto.createHmac('SHA256', channelSecret).update(body).digest('base64');
+    if (signature !== expectedSignature) {
+      console.error('SignatureValidationFailed: signature validation failed');
+      res.status(401).send('SignatureValidationFailed');
+      return;
+    }
+
+    const bodyJson = JSON.parse(body.toString('utf8'));
+    const events: WebhookEvent[] = bodyJson.events;
 
     await Promise.all(
       events.map(async (event: WebhookEvent) => {
         if (event.type === 'message') {
           // ป้องกัน bot ทำงานกับข้อความใน group/room (ให้ bot ส่งข้อมูลไปเฉยๆ โดยไม่ตอบโต้ในกลุ่ม)
           if (event.source.type === 'group' || event.source.type === 'room') {
-            console.log(`Received message in group/room. ID: ${(event.source as any).groupId || (event.source as any).roomId}`);
+            const groupId = (event.source as any).groupId || (event.source as any).roomId;
+            console.log(`Received message in group/room. ID: ${groupId}`);
             return;
           }
 
           const messageType = event.message.type;
-
           // รองรับ text, image, file, sticker
           if (['text', 'image', 'file', 'sticker'].includes(messageType)) {
             await lineService.handleMessage(event);
           } else {
-            // message type อื่นๆ ที่ไม่รองรับ
             console.log(`Unsupported message type: ${messageType}`);
           }
         } else if (event.type === 'join') {
           // เมื่อ Bot ถูกดึงเข้ากลุ่ม ให้พิมพ์ ID กลุ่มออกมาเพื่อนำไปใส่ ADMIN_GROUP_ID
           console.log(`Bot joined a ${event.source.type}! ID: ${(event.source as any).groupId || (event.source as any).roomId}`);
+        } else if (event.type === 'leave') {
+          console.log(`Bot left a ${event.source.type}! ID: ${(event.source as any).groupId || (event.source as any).roomId}. Either kicked or API setting denies group join.`);
+        } else if (event.type === 'follow') {
+          await lineService.handleFollow(event);
+        } else {
+          console.log(`Received event type: ${event.type}`);
         }
       })
     );
