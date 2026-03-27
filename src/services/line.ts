@@ -20,6 +20,27 @@ export class LineService {
     this.client = lineClient;
   }
 
+  private async getActiveConversation(userId: string): Promise<any> {
+    const conversation = await Conversation.findOne({
+      lineUserId: userId,
+      status: 'active'
+    }).sort({ createdAt: -1 });
+
+    if (conversation) {
+      // ตรวจสอบว่าข้ามวันหรือไม่
+      const today = new Date().toDateString();
+      const createdDate = new Date(conversation.createdAt).toDateString();
+      if (today !== createdDate) {
+        conversation.status = 'closed';
+        conversation.closedAt = new Date();
+        await conversation.save();
+        return null; // หมดอายุวันก่อน ให้เริ่มใหม่
+      }
+      return conversation;
+    }
+    return null;
+  }
+
   async handleMessage(event: MessageEvent): Promise<any> {
     const replyToken = event.replyToken;
     const source = event.source;
@@ -59,6 +80,19 @@ export class LineService {
         return await this.handleRating(replyToken, userId, (message as TextEventMessage).text, waitingRatingConv);
       }
 
+      // ตรวจสอบว่า user กำลังให้รายละเอียดเพื่อติดต่อเจ้าหน้าที่หรือไม่
+      const waitingEscalationConv = await Conversation.findOne({
+        lineUserId: userId,
+        status: 'waiting_escalation_issue'
+      });
+
+      if (waitingEscalationConv) {
+        if (message.type !== 'text') {
+          return await this.replyMessage(replyToken, 'กรุณาระบุปัญหาเป็นข้อความครับ');
+        }
+        return await this.escalateToSupport(replyToken, userId, (message as TextEventMessage).text, waitingEscalationConv);
+      }
+
       // จัดการ message แต่ละประเภท
       switch (message.type) {
         case 'text':
@@ -69,6 +103,9 @@ export class LineService {
 
         case 'file':
           return await this.handleFileMessage(replyToken, userId, message as FileEventMessage);
+
+        case 'sticker':
+          return await this.replyMessage(replyToken, 'สวัสดีครับ หากต้องการให้ดูแลเรื่อง IT Support รบกวนพิมพ์ /start เพื่อเริ่มสนทนาใหม่ได้เลยครับ 😊');
 
         default:
           return await this.replyMessage(replyToken, 'ขออภัยครับ รองรับเฉพาะข้อความ, รูปภาพ และไฟล์ PDF เท่านั้น');
@@ -85,8 +122,25 @@ export class LineService {
       return await this.startNewConversation(replyToken, userId);
     }
 
+    const greetingKeywords = ['hi', 'hello', 'สวัสดี', 'สวัสดีครับ', 'สวัสดีค่ะ', 'ดีจ้า', 'ดีครับ', 'ดีค่ะ', 'ทัก', 'ดีค้าบ', 'สวัสดีค้าบ', 'หวัดดี'];
+    if (greetingKeywords.includes(text.toLowerCase().trim())) {
+      return await this.replyMessage(replyToken, 'สวัสดีครับ หากต้องการให้ดูแลเรื่อง IT Support รบกวนพิมพ์ /start เพื่อเริ่มสนทนาใหม่ได้เลยครับ 😊');
+    }
+
     if (text === '/help' || text === 'ช่วยเหลือ') {
       return await this.showHelp(replyToken);
+    }
+
+    // ดักจับ Quick Reply รีแอคชันเมื่อถามว่า "แก้ปัญหาได้แล้วหรือยังครับ?"
+    if (text === 'แก้ได้แล้ว') {
+      const activeConv = await Conversation.findOne({ lineUserId: userId, status: 'active' }).sort({ createdAt: -1 });
+      if (activeConv) {
+        return await this.handleRating(replyToken, userId, text, activeConv);
+      }
+    }
+
+    if (text === 'ยังแก้ไม่ได้') {
+      return await this.escalateToSupport(replyToken, userId, text);
     }
 
     const escalateKeywords = [
@@ -95,7 +149,7 @@ export class LineService {
       'แจ้งit', 'แจ้ง it', 'เรียกแอดมิน', 'เรียก admin'
     ];
     if (escalateKeywords.some(keyword => text.toLowerCase().includes(keyword))) {
-      return await this.escalateToSupport(replyToken, userId);
+      return await this.promptForEscalationIssue(replyToken, userId);
     }
 
     // จัดการการสนทนาปกติ
@@ -115,14 +169,12 @@ export class LineService {
       const imageData = Buffer.concat(chunks);
       const base64Image = imageData.toString('base64');
 
-      // ส่งรูปไปให้ Gemini วิเคราะห์
+      // เปิด Loading Animation (20 วินาที) ก่อนส่งรูปไปให้ Gemini วิเคราะห์
+      await this.showLoadingAnimation(userId, 20);
       const analysisResult = await geminiService.analyzeImage(base64Image);
 
       // บันทึกลง conversation
-      let conversation = await Conversation.findOne({
-        lineUserId: userId,
-        status: 'active'
-      }).sort({ createdAt: -1 });
+      let conversation = await this.getActiveConversation(userId);
 
       if (!conversation) {
         conversation = await Conversation.create({
@@ -175,14 +227,12 @@ export class LineService {
       const fileData = Buffer.concat(chunks);
       const base64File = fileData.toString('base64');
 
-      // ส่งไฟล์ PDF ไปให้ Gemini วิเคราะห์
+      // เปิด Loading Animation (20 วินาที) ก่อนส่งไฟล์ PDF ไปให้ Gemini วิเคราะห์
+      await this.showLoadingAnimation(userId, 20);
       const analysisResult = await geminiService.analyzePDF(base64File, fileName);
 
       // บันทึกลง conversation
-      let conversation = await Conversation.findOne({
-        lineUserId: userId,
-        status: 'active'
-      }).sort({ createdAt: -1 });
+      let conversation = await this.getActiveConversation(userId);
 
       if (!conversation) {
         conversation = await Conversation.create({
@@ -222,11 +272,53 @@ export class LineService {
     if (state.step === 0) {
       registrationStates.set(userId, { step: 1 });
       return await this.replyMessage(replyToken,
-        'ยินดีต้อนรับสู่ระบบ IT Support 👋\n\nกรุณากรอกข้อมูลเพื่อเริ่มใช้งาน\n\nชื่อ-นามสกุล:'
+        'ยินดีต้อนรับสู่ระบบ IT Support 👋\n\nกรุณากรอกข้อมูลเพื่อเริ่มใช้งาน\nคุณสามารถพิมพ์รวดเดียว (คั่นด้วยเว้นวรรค หรือขึ้นบรรทัดใหม่) ได้เลยครับ\n\nตัวอย่าง:\nสมชาย ใจดี\n12345\nไอที\n\nหรือจะค่อยๆ พิมพ์ทีละอย่างก็ได้ครับ\n\nเริ่มจากใส่ ชื่อ-นามสกุล:'
       );
     }
 
     if (state.step === 1) {
+      // ตรวจสอบว่าพิมพ์มาทีเดียวครบรึเปล่า (ดูจากการขึ้นบรรทัดใหม่)
+      let parts = text.split('\n').map(p => p.trim()).filter(p => p.length > 0);
+
+      // ถ้าไม่มีการเว้นบรรทัด ลองดูว่าเว้นวรรคมาหรือไม่ (ถ้ามีอย่างน้อย 3 ส่วน คือ ชื่อ สกุล รหัส แผนก)
+      if (parts.length === 1) {
+        const spaceParts = text.split(/\s+/).filter(p => p.length > 0);
+        if (spaceParts.length >= 4) {
+          // สมมติ 2 คำสุดท้ายคือ รหัสพนักงาน และ แผนก ส่วนที่เหลือคือชื่อ-สกุล
+          const dept = spaceParts.pop() || '';
+          const empId = spaceParts.pop() || '';
+          const name = spaceParts.join(' ');
+          parts = [name, empId, dept];
+        } else if (spaceParts.length === 3) {
+          // ถ้ามี 3 คำ สมมติเป็น ชื่อ รหัส แผนก
+          const dept = spaceParts.pop() || '';
+          const empId = spaceParts.pop() || '';
+          const name = spaceParts[0];
+          parts = [name, empId, dept];
+        }
+      }
+
+      if (parts.length >= 3) {
+        // ลงทะเบียนสำเร็จในครั้งเดียว
+        state.name = parts[0];
+        state.employeeId = parts[1];
+        state.department = parts.slice(2).join(' ');
+
+        await User.create({
+          lineUserId: userId,
+          name: state.name,
+          employeeId: state.employeeId,
+          department: state.department
+        });
+
+        registrationStates.delete(userId);
+
+        return await this.replyMessage(replyToken,
+          `ลงทะเบียนสำเร็จแบบรวดรัด! ✅\n\nชื่อ: ${state.name}\nรหัสพนักงาน: ${state.employeeId}\nแผนก: ${state.department}\n\nพิมพ์คำถามหรือปัญหาที่ต้องการความช่วยเหลือได้เลยครับ 😊`
+        );
+      }
+
+      // ถ้าไม่ได้พิมพ์มาครบ ให้เข้าสู่ Step ต่อไปปกติ
       state.name = text;
       state.step = 2;
       registrationStates.set(userId, state);
@@ -260,11 +352,8 @@ export class LineService {
   }
 
   async handleConversation(replyToken: string, userId: string, text: string): Promise<any> {
-    // หา conversation ที่กำลัง active อยู่
-    let conversation = await Conversation.findOne({
-      lineUserId: userId,
-      status: 'active'
-    }).sort({ createdAt: -1 });
+    // หา conversation ที่กำลัง active อยู่ (และไม่ข้ามวัน)
+    let conversation = await this.getActiveConversation(userId);
 
     // ถ้าไม่มี สร้างใหม่
     if (!conversation) {
@@ -283,32 +372,55 @@ export class LineService {
       timestamp: new Date()
     });
 
-    // ส่งไปให้ Gemini ประมวลผล
-    const aiResponse = await geminiService.chat(conversation.messages);
+    await this.showLoadingAnimation(userId, 20);
+    const aiResponseRaw = await geminiService.chat(conversation.messages);
+    
+    // แยกเนื้อหาและหมวดย่อยของคำตอบ
+    const { content: aiResponse, type: responseType } = geminiService.parseResponse(aiResponseRaw);
 
-    // เพิ่มคำตอบของ AI
+    // เก็บประวัติการสนทนา
     conversation.messages.push({
       role: 'assistant',
       content: aiResponse,
       timestamp: new Date()
     });
 
-    await conversation.save();
+    // ตรวจสอบประเภทคำถาม
+    if (responseType === 'OUT_OF_SCOPE') {
+      conversation.nonItCount = (conversation.nonItCount || 0) + 1;
+      
+      // ถ้าถามนอกเรื่องครบ 3 ครั้ง
+      if (conversation.nonItCount >= 3) {
+        await conversation.save();
+        return await this.replyMessage(
+          replyToken, 
+          '⚠️ คำเตือน: ระบบตรวจพบว่าคุณถามข้อมูลที่ไม่เกี่ยวข้องกับ IT Support ครบจำนวนครั้งที่กำหนดแล้ว\n\nกรุณาสอบถามเฉพาะปัญหาที่เกี่ยวกับ IT (เช่น คอมพิวเตอร์เสีย, โปรแกรมใช้งานไม่ได้) เท่านั้นครับ'
+        );
+      }
 
-    // ถามว่าแก้ปัญหาได้หรือยัง (ถ้าสนทนาไปแล้ว 4 ข้อความขึ้นไป)
-    if (conversation.messages.length >= 4) {
-      return await this.replyMessageWithQuickReply(
-        replyToken,
-        aiResponse + '\n\n---\nแก้ปัญหาได้แล้วหรือยังครับ?',
-        [
-          { label: '✅ แก้ได้แล้ว', text: 'แก้ได้แล้ว' },
-          { label: '❌ ยังไม่ได้', text: 'ยังแก้ไม่ได้' },
-          { label: '👤 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' }
-        ]
-      );
+      await conversation.save();
+      return await this.replyMessage(replyToken, aiResponse);
     }
 
-    return await this.replyMessage(replyToken, aiResponse);
+    // ถ้ากลับมาถามเรื่อง IT ให้ Reset ตัวนับคำถามนอกเรื่อง
+    conversation.nonItCount = 0;
+    await conversation.save();
+
+    // ถ้าเป็นแค่การให้ข้อมูล (ไม่ใช่การแก้ปัญหา) ก็ไม่ต้องถามว่าแก้ได้หรือยัง
+    if (responseType === 'IT_INFO') {
+      return await this.replyMessage(replyToken, aiResponse);
+    }
+
+    // ถามว่าแก้ปัญหาได้หรือยัง (เฉพาะคำถามที่เป็น IT_PROBLEM)
+    return await this.replyMessageWithQuickReply(
+      replyToken,
+      aiResponse + '\n\n---\nแก้ปัญหาได้แล้วหรือยังครับ?',
+      [
+        { label: '✅ แก้ได้แล้ว', text: 'แก้ได้แล้ว' },
+        { label: '❌ ยังไม่ได้', text: 'ยังแก้ไม่ได้' },
+        { label: '👤 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' }
+      ]
+    );
   }
 
   async handleRating(replyToken: string, userId: string, text: string, conversation: IConversation): Promise<any> {
@@ -354,25 +466,37 @@ export class LineService {
     return await this.replyMessage(replyToken, 'กรุณาเลือกคะแนน 1-5 ดาว');
   }
 
-  async escalateToSupport(replyToken: string, userId: string): Promise<any> {
+  async escalateToSupport(replyToken: string, userId: string, userText?: string, existingConv?: IConversation): Promise<any> {
     // หาผู้ใช้งานอิงตาม userId
     const user = await User.findOne({ lineUserId: userId });
 
     // อัพเดท conversation
-    const conversation = await Conversation.findOne({
+    const conversation = existingConv || await Conversation.findOne({
       lineUserId: userId,
-      status: { $in: ['active', 'waiting_rating'] }
+      status: { $in: ['active', 'waiting_rating', 'waiting_escalation_issue'] }
     }).sort({ createdAt: -1 });
 
     let issueSummary = 'ไม่ระบุปัญหา';
 
     if (conversation) {
+      // บันทึกข้อความล่าสุดของ user ลงในประวัติสนทนาก่อนวิเคราะห์
+      if (userText) {
+        conversation.messages.push({
+          role: 'user',
+          content: userText,
+          timestamp: new Date()
+        });
+      }
+
       conversation.escalated = true;
       conversation.issue = await geminiService.analyzeIssue(conversation.messages);
       conversation.status = 'closed';
       conversation.closedAt = new Date();
       await conversation.save();
       issueSummary = conversation.issue;
+    } else if (userText) {
+      // ไม่มี conversation แต่มีข้อความจาก user → ใช้ข้อความนั้นเป็นสรุปปัญหาเลย
+      issueSummary = userText;
     }
 
     // ส่งข้อความไปที่ Group ของ Admin
@@ -397,10 +521,41 @@ export class LineService {
     );
   }
 
-  async startNewConversation(replyToken: string, userId: string): Promise<any> {
+  async promptForEscalationIssue(replyToken: string, userId: string): Promise<any> {
+    let conversation = await this.getActiveConversation(userId);
+    if (!conversation) {
+      conversation = await Conversation.create({
+        lineUserId: userId,
+        sessionId: uuidv4(),
+        messages: [],
+        status: 'waiting_escalation_issue'
+      });
+    } else {
+      conversation.status = 'waiting_escalation_issue';
+      await conversation.save();
+    }
+
     return await this.replyMessage(
       replyToken,
-      'เริ่มการสนทนาใหม่\n\nมีอะไรให้ช่วยไหมครับ? 😊'
+      'ต้องการแจ้งเรื่องอะไรครับ พิมพ์รายละเอียดทิ้งไว้ได้เลยครับ'
+    );
+  }
+
+  async startNewConversation(replyToken: string, userId: string): Promise<any> {
+    // ปิดบทสนทนาเก่าทุกสถานะ
+    const openConvs = await Conversation.find({ 
+      lineUserId: userId, 
+      status: { $in: ['active', 'waiting_rating', 'waiting_escalation_issue'] } 
+    });
+    for (const conv of openConvs) {
+      conv.status = 'closed';
+      conv.closedAt = new Date();
+      await conv.save();
+    }
+
+    return await this.replyMessage(
+      replyToken,
+      'ยินดีให้บริการครับ\nหากคุณกำลังประสบปัญหาในการใช้งานคอมพิวเตอร์ ระบบเครือข่าย อีเมล หรือโปรแกรมต่างๆ สามารถแจ้งรายละเอียดปัญหาเข้ามาได้เลยครับ ผมพร้อมช่วยตรวจสอบและแนะนำขั้นตอนการแก้ไขเบื้องต้นให้ครับ'
     );
   }
 
@@ -421,6 +576,27 @@ export class LineService {
    พิมพ์ "ติดต่อเจ้าหน้าที่"`;
 
     return await this.replyMessage(replyToken, helpText);
+  }
+
+  async showLoadingAnimation(chatId: string, loadingSeconds: number = 20): Promise<void> {
+    try {
+      const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+      if (!token) return;
+
+      await fetch('https://api.line.me/v2/bot/chat/loading/start', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          chatId,
+          loadingSeconds
+        })
+      });
+    } catch (error) {
+      console.error('Error showing loading animation:', error);
+    }
   }
 
   async replyMessage(replyToken: string, text: string): Promise<any> {

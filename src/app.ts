@@ -7,7 +7,7 @@ import { LineService } from './services/line.js';
 import apiRoutes from './routes/api.js';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT;
 
 // LINE Bot Configuration
 const lineConfig = {
@@ -24,23 +24,7 @@ connectDB().catch(err => {
   process.exit(1);
 });
 
-// Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Health check
-app.get('/', (req: Request, res: Response) => {
-  res.json({
-    status: 'ok',
-    service: 'LINE IT AI Support',
-    timestamp: new Date().toISOString()
-  });
-});
-
-// API Routes
-app.use('/api', apiRoutes);
-
-// LINE Webhook
+// LINE Webhook ต้องอยู่ก่อน express.json() เพื่อให้ middleware สามารถอ่าน raw body ไปตรวจสอบ signature ได้
 app.post('/webhook', middleware(lineConfig) as any, async (req: Request, res: Response) => {
   try {
     const events: WebhookEvent[] = req.body.events;
@@ -56,8 +40,8 @@ app.post('/webhook', middleware(lineConfig) as any, async (req: Request, res: Re
 
           const messageType = event.message.type;
 
-          // รองรับ text, image, file
-          if (['text', 'image', 'file'].includes(messageType)) {
+          // รองรับ text, image, file, sticker
+          if (['text', 'image', 'file', 'sticker'].includes(messageType)) {
             await lineService.handleMessage(event);
           } else {
             // message type อื่นๆ ที่ไม่รองรับ
@@ -79,6 +63,24 @@ app.post('/webhook', middleware(lineConfig) as any, async (req: Request, res: Re
     });
   }
 });
+
+// Middleware สำหรับ API อื่นๆ ที่ไม่ใช่ Webhook
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Health check
+app.get('/', (req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    service: 'LINE IT AI Support',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// API Routes
+app.use('/api', apiRoutes);
+
+
 
 // Error handling middleware
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {

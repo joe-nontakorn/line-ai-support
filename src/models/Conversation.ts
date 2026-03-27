@@ -15,7 +15,8 @@ export interface IConversation extends Document {
   rating: number | null;
   feedback: string;
   escalated: boolean;
-  status: 'active' | 'waiting_rating' | 'closed';
+  nonItCount: number;
+  status: 'active' | 'waiting_rating' | 'waiting_escalation_issue' | 'closed';
   createdAt: Date;
   closedAt: Date | null;
 }
@@ -71,9 +72,13 @@ const conversationSchema = new Schema<IConversation>({
     type: Boolean,
     default: false
   },
+  nonItCount: {
+    type: Number,
+    default: 0
+  },
   status: {
     type: String,
-    enum: ['active', 'waiting_rating', 'closed'],
+    enum: ['active', 'waiting_rating', 'waiting_escalation_issue', 'closed'],
     default: 'active'
   },
   createdAt: {

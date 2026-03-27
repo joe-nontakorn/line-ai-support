@@ -39,4 +39,6 @@ Line API → Cloudflare → Tunnel → Private Server (webhook)
 - **AI**: Google Gemini 1.5 Flash
 - **Messaging**: LINE Messaging API
 
-## Installation
+## RUN cloudflared tunnel
+
+cloudflared tunnel --url http://localhost:3002
