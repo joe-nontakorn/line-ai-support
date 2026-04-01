@@ -31,43 +31,124 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 const MODEL_NAME = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview';
 
-const SYSTEM_PROMPT = `คุณเป็น AI Assistant สำหรับ IT Support ของบริษัท
-บทบาทของคุณคือช่วยแก้ปัญหาด้าน IT ให้กับพนักงาน
+// ──────────────────────────────────────────────
+// System Prompt: หัวใจของ AI IT Support
+// ──────────────────────────────────────────────
+const SYSTEM_PROMPT = `คุณชื่อ "Jastel IT Helper" เป็น AI Assistant สำหรับ IT Support ของบริษัท Jastel Network
+บทบาทของคุณคือช่วยวินิจฉัยและแก้ปัญหาด้าน IT ให้กับพนักงานอย่างมืออาชีพ
 
-สิ่งที่คุณสามารถช่วยได้:
-- ปัญหาการใช้งานคอมพิวเตอร์ Windows/Mac
-- ปัญหาอินเทอร์เน็ต, Wi-Fi, VPN
-- ปัญหา Email, Microsoft Office, Google Workspace
-- ปัญหา Printer, Scanner
-- การ reset รหัสผ่าน
-- ปัญหาซอฟต์แวร์ต่างๆ
+═══════════════════════════════════════
+🎯 ขอบเขตที่ช่วยได้:
+═══════════════════════════════════════
+- ปัญหาคอมพิวเตอร์ Windows / Mac (เปิดไม่ติด, ช้า, จอฟ้า, Restart เอง)
+- ระบบเครือข่าย: อินเทอร์เน็ต, Wi-Fi, VPN, LAN
+- อีเมลและสื่อสาร: Gmail, Outlook, Microsoft Teams, Google Meet
+- โปรแกรมสำนักงาน: Microsoft Office, Google Workspace, SAP, ERP
+- อุปกรณ์ต่อพ่วง: Printer, Scanner, จอมอนิเตอร์, คีย์บอร์ด, เมาส์
+- บัญชีผู้ใช้: ลืมรหัสผ่าน, ล็อกอินไม่ได้, สิทธิ์การเข้าถึง (Access Right)
+- ความปลอดภัย: ไวรัส, มัลแวร์, อีเมลหลอกลวง (Phishing)
 - ปัญหาฮาร์ดแวร์เบื้องต้น
+- ปัญหาซอฟต์แวร์ที่ใช้ในบริษัท
 
-วิธีการตอบ:
-1. ให้คำแนะนำที่ชัดเจน เป็นขั้นตอน
-2. ใช้ภาษาที่เข้าใจง่าย ไม่ซับซ้อนเกินไป
-3. ถามคำถามเพิ่มเติมถ้าข้อมูลไม่เพียงพอ
-4. ถ้าปัญหาซับซ้อนหรือต้องการการเข้าถึงระบบจริง ให้แนะนำให้ติดต่อ IT Support
+═══════════════════════════════════════
+🧠 กลยุทธ์การตอบ (สำคัญมาก):
+═══════════════════════════════════════
 
-ข้อจำกัดและกฎเหล็ก (CRITICAL RULES):
-- ห้ามตอบคำถามที่ไม่ได้เกี่ยวข้องกับคอมพิวเตอร์ อินเทอร์เน็ต หรือปัญหาไอที (เช่น ชวนคุยเล่น, ถามเรื่องทั่วไป, สูตรอาหาร, หาพิกัด ฯลฯ) โดยเด็ดขาด
-- หากเจอคำถามนอกเรื่อง ให้ตอบกลับเพียงอย่างเดียวว่า "ขออภัยครับ คำถามของคุณอยู่นอกเหนือจากขอบเขตให้บริการของผมที่เป็นผู้ช่วย IT Support ครับ หากมีปัญหาเกี่ยวกับการใช้งานคอมพิวเตอร์ ระบบภายใน หรือโปรแกรมต่างๆ สอบถามเข้ามาได้เลยครับ"
-- ไม่ให้ข้อมูลที่อาจเป็นอันตรายต่อความปลอดภัยของระบบ
-- ไม่แนะนำให้ดาวน์โหลดซอฟต์แวร์จากแหล่งที่ไม่น่าเชื่อถือ
-- ถ้าไม่แน่ใจ ให้แนะนำติดต่อ IT Support
+📌 **กฎข้อ 1: ถามก่อนตอบเสมอ ถ้าข้อมูลไม่ชัดเจน**
+   - หากผู้ใช้แจ้งปัญหาแบบกว้างๆ เช่น "ลืมรหัสผ่าน", "เข้าไม่ได้", "ใช้ไม่ได้", "มีปัญหา"
+     → ห้ามเดาเอง ต้องถามกลับทันทีว่าเป็นของระบบอะไร โปรแกรมอะไร
+   - ตัวอย่าง:
+     • "ลืมรหัสผ่าน" → "ลืมรหัสผ่านของระบบอะไรครับ? เช่น Gmail, Windows Login, SAP, VPN?"
+     • "เข้าไม่ได้" → "เข้าไม่ได้ที่ระบบหรือโปรแกรมอะไรครับ? มีข้อความ Error ขึ้นบ้างไหมครับ?"
+     • "ปริ้นไม่ออก" → "ใช้เครื่องพิมพ์รุ่นอะไรครับ? อยู่ชั้นไหน? มี Error ขึ้นที่หน้าจอคอมหรือไม่ครับ?"
 
-ตอบเป็นภาษาไทย และกระชับ เข้าใจง่าย
+📌 **กฎข้อ 2: ตอบเฉพาะเรื่องที่ถามในรอบนี้**
+   - แต่ละการสนทนาเป็นเคสเดียว (1 ปัญหา)
+   - ห้ามนำเรื่องจากเคสก่อนหน้า (ที่ปิดไปแล้ว) มาปนกับเคสใหม่
+   - จดจ่อกับปัญหาปัจจุบันเท่านั้น
 
-สำคัญมาก: ทุกคำตอบต้องปิดท้ายด้วยแท็กหมวดหมู่ดังนี้ (ห้ามลืม):
-- [[TYPE:IT_PROBLEM]] หากเป็นการช่วยแก้ปัญหา/อาการเสียด้าน IT
-- [[TYPE:IT_INFO]] หากเป็นการตอบคำถามให้ข้อมูลทั่วไปเกี่ยวกับ IT (ไม่ได้แก้ปัญหา)
-- [[TYPE:OUT_OF_SCOPE]] หากเป็นคำถามนอกเรื่องที่ไม่เกี่ยวกับ IT`;
+📌 **กฎข้อ 3: ตอบเป็นขั้นตอน ชัดเจน กระชับ**
+   - ใช้หมายเลขลำดับขั้นตอน (1, 2, 3, ...)
+   - ใช้ภาษาง่าย ไม่ศัพท์เทคนิคมากเกินไป (ถ้าจำเป็นต้องใช้ ให้อธิบายกำกับ)
+   - ข้อความไม่ยาวเกินไป เน้นอ่านง่ายบนมือถือ
+
+📌 **กฎข้อ 4: รู้ขอบเขตของตัวเอง**
+   - ถ้าปัญหาต้องเข้าถึงระบบจริง (เช่น Remote, ตั้งค่า Server) → แนะนำให้ติดต่อ IT Support โดยตรง
+   - ถ้าไม่แน่ใจ → แนะนำติดต่อ IT Support
+
+📌 **กฎข้อ 5: สรุปผลท้ายข้อความ**
+   - เมื่อให้คำแนะนำจบแล้ว ให้ปิดท้ายด้วยประโยคว่า:
+     "ลองทำตามขั้นตอนด้านบนดูนะครับ หากยังไม่ได้ สามารถกดปุ่ม 'ยังแก้ไม่ได้' เพื่อแจ้งเจ้าหน้าที่ IT ได้เลยครับ"
+
+═══════════════════════════════════════
+🚫 กฎเหล็ก (ห้ามละเมิด):
+═══════════════════════════════════════
+- ห้ามตอบคำถามที่ไม่เกี่ยวกับ IT โดยเด็ดขาด (เช่น ชวนคุยเล่น, ถามเรื่องทั่วไป, สูตรอาหาร, ดูดวง, หาพิกัด ฯลฯ)
+- หากเจอคำถามนอกเรื่อง ให้ตอบสั้นๆ ว่า:
+  "ขออภัยครับ คำถามนี้อยู่นอกขอบเขตบริการ IT Support ครับ หากมีปัญหาเกี่ยวกับคอมพิวเตอร์ โปรแกรม หรือระบบต่างๆ สอบถามได้เลยครับ"
+- ห้ามให้ข้อมูลที่เป็นอันตรายต่อความปลอดภัยของระบบ
+- ห้ามแนะนำให้ดาวน์โหลดซอฟต์แวร์จากแหล่งไม่น่าเชื่อถือ
+- ห้ามเปิดเผยข้อมูลส่วนตัวของพนักงานคนอื่น
+
+═══════════════════════════════════════
+🏷️ แท็กหมวดหมู่ (ต้องใส่ทุกคำตอบ):
+═══════════════════════════════════════
+ทุกคำตอบต้องปิดท้ายด้วยแท็กอย่างใดอย่างหนึ่ง:
+- [[TYPE:IT_PROBLEM]] → ช่วยแก้ปัญหา/วินิจฉัยอาการด้าน IT
+- [[TYPE:IT_INFO]] → ตอบคำถามให้ข้อมูลทั่วไปเกี่ยวกับ IT (ไม่ใช่แก้ปัญหา)
+- [[TYPE:OUT_OF_SCOPE]] → คำถามนอกขอบเขต ไม่เกี่ยวกับ IT
+
+ตอบเป็นภาษาไทย กระชับ เข้าใจง่าย`;
+
+// ──────────────────────────────────────────────
+// Semaphore: จำกัด concurrent API calls
+// ป้องกัน Rate Limit เมื่อหลายคนแชทพร้อมกัน
+// ──────────────────────────────────────────────
+class Semaphore {
+  private queue: Array<() => void> = [];
+  private running = 0;
+
+  constructor(private maxConcurrency: number) {}
+
+  async acquire(): Promise<void> {
+    if (this.running < this.maxConcurrency) {
+      this.running++;
+      return;
+    }
+    return new Promise<void>((resolve) => {
+      this.queue.push(() => {
+        this.running++;
+        resolve();
+      });
+    });
+  }
+
+  release(): void {
+    this.running--;
+    if (this.queue.length > 0) {
+      const next = this.queue.shift();
+      next?.();
+    }
+  }
+
+  get currentLoad(): number {
+    return this.running;
+  }
+
+  get queueLength(): number {
+    return this.queue.length;
+  }
+}
 
 export class GeminiService {
   private model: GenerativeModel;
   private visionModel: GenerativeModel;
   private readonly maxChatHistoryMessages = 20;
   private readonly maxIssueAnalysisChars = 12000;
+
+  // Concurrency control: จำกัดไม่เกิน 10 requests พร้อมกัน
+  private chatSemaphore = new Semaphore(10);
+  private analysisSemaphore = new Semaphore(5);
 
   constructor() {
     this.model = genAI.getGenerativeModel({ model: MODEL_NAME });
@@ -105,8 +186,11 @@ export class GeminiService {
       return await fn();
     } catch (error) {
       if (retries > 0 && this.isRetryableError(error)) {
-        console.warn(`Gemini retry in ${delayMs}ms (${retries} retries left)`);
-        await this.sleep(delayMs);
+        // เพิ่ม jitter เพื่อกระจาย retry ไม่ให้ชนกัน
+        const jitter = Math.random() * 500;
+        const totalDelay = delayMs + jitter;
+        console.warn(`Gemini retry in ${Math.round(totalDelay)}ms (${retries} retries left) | Load: ${this.chatSemaphore.currentLoad}/${this.chatSemaphore.queueLength} queued`);
+        await this.sleep(totalDelay);
         return this.retryWithBackoff(fn, retries - 1, delayMs * 2);
       }
       throw error;
@@ -168,7 +252,20 @@ export class GeminiService {
     };
   }
 
+  /**
+   * Chat with AI — ใช้ Semaphore เพื่อจำกัด concurrent calls
+   * แต่ละ user จะถูกจัด queue อัตโนมัติเมื่อ load สูง
+   */
   async chat(conversationHistory: IMessage[]): Promise<string> {
+    await this.chatSemaphore.acquire();
+    try {
+      return await this._chatInternal(conversationHistory);
+    } finally {
+      this.chatSemaphore.release();
+    }
+  }
+
+  private async _chatInternal(conversationHistory: IMessage[]): Promise<string> {
     return this.retryWithBackoff(async () => {
       try {
         const sanitizedHistory = this.trimConversationHistory(
@@ -196,13 +293,15 @@ export class GeminiService {
             },
             {
               role: 'model',
-              parts: [{ text: 'เข้าใจครับ ผมพร้อมช่วยเหลือเรื่อง IT Support ด้วยความยินดีครับ [[TYPE:IT_INFO]]' }],
+              parts: [{ text: 'เข้าใจครับ ผม Jastel IT Helper พร้อมช่วยเหลือเรื่อง IT Support ด้วยความยินดีครับ สอบถามปัญหาได้เลยครับ [[TYPE:IT_INFO]]' }],
             },
             ...this.toGeminiHistory(history),
           ],
           generationConfig: {
             maxOutputTokens: 2048,
-            temperature: 0.4,
+            temperature: 0.3,
+            topP: 0.85,
+            topK: 40,
           },
         });
 
@@ -228,6 +327,15 @@ export class GeminiService {
   }
 
   async analyzeImage(base64Image: string): Promise<GeminiAnalysisResult> {
+    await this.analysisSemaphore.acquire();
+    try {
+      return await this._analyzeImageInternal(base64Image);
+    } finally {
+      this.analysisSemaphore.release();
+    }
+  }
+
+  private async _analyzeImageInternal(base64Image: string): Promise<GeminiAnalysisResult> {
     return this.retryWithBackoff(async () => {
       try {
         const prompt = `${SYSTEM_PROMPT}
@@ -274,6 +382,15 @@ export class GeminiService {
   }
 
   async analyzePDF(base64PDF: string, fileName: string): Promise<GeminiAnalysisResult> {
+    await this.analysisSemaphore.acquire();
+    try {
+      return await this._analyzePDFInternal(base64PDF, fileName);
+    } finally {
+      this.analysisSemaphore.release();
+    }
+  }
+
+  private async _analyzePDFInternal(base64PDF: string, fileName: string): Promise<GeminiAnalysisResult> {
     return this.retryWithBackoff(async () => {
       try {
         const prompt = `${SYSTEM_PROMPT}
@@ -320,6 +437,15 @@ export class GeminiService {
   }
 
   async analyzeIssue(conversationHistory: IMessage[]): Promise<string> {
+    await this.analysisSemaphore.acquire();
+    try {
+      return await this._analyzeIssueInternal(conversationHistory);
+    } finally {
+      this.analysisSemaphore.release();
+    }
+  }
+
+  private async _analyzeIssueInternal(conversationHistory: IMessage[]): Promise<string> {
     return this.retryWithBackoff(async () => {
       try {
         const userMessages = conversationHistory
@@ -339,23 +465,20 @@ export class GeminiService {
         const prompt = `จากบทสนทนาต่อไปนี้ กรุณาประเมินว่าเป็นปัญหาที่เกี่ยวข้องกับ IT หรือไม่
 
 ตัวอย่างเรื่องที่ถือว่าเกี่ยวกับ IT:
-- คอมพิวเตอร์
-- อินเทอร์เน็ต
-- Wi-Fi
-- VPN
-- อีเมล
-- โปรแกรม
-- Printer
-- Scanner
+- คอมพิวเตอร์ (เปิดไม่ติด, ช้า, จอดำ, จอฟ้า)
+- อินเทอร์เน็ต, Wi-Fi, VPN, LAN
+- อีเมล (Gmail, Outlook)
+- โปรแกรม (Microsoft Office, SAP, ERP, Teams)
+- Printer, Scanner
 - ระบบเครือข่าย
-- บัญชีผู้ใช้
+- บัญชีผู้ใช้, รหัสผ่าน
 - สิทธิ์การเข้าใช้งานระบบ
 
 บทสนทนา:
 ${messages}
 
 กติกาการตอบ:
-- ถ้าเกี่ยวข้องกับ IT: สรุปปัญหาหลักเป็นประโยคสั้น ๆ ภาษาไทย ไม่เกิน 1 บรรทัด
+- ถ้าเกี่ยวข้องกับ IT: สรุปปัญหาหลักเป็นประโยคสั้น ๆ ภาษาไทย ไม่เกิน 1 บรรทัด (ต้องระบุชื่อระบบ/โปรแกรมที่มีปัญหาด้วย)
 - ถ้าไม่เกี่ยวข้องกับ IT: ตอบเพียงคำเดียวว่า NON_IT_ISSUE
 - ห้ามอธิบายเพิ่ม
 - ห้ามขึ้นหลายบรรทัด`;
@@ -377,6 +500,22 @@ ${messages}
         return 'ไม่สามารถสรุปปัญหาได้';
       }
     });
+  }
+
+  /**
+   * ดูสถานะ Load ปัจจุบัน (สำหรับ monitoring)
+   */
+  getLoadStatus() {
+    return {
+      chat: {
+        running: this.chatSemaphore.currentLoad,
+        queued: this.chatSemaphore.queueLength,
+      },
+      analysis: {
+        running: this.analysisSemaphore.currentLoad,
+        queued: this.analysisSemaphore.queueLength,
+      },
+    };
   }
 }
 
