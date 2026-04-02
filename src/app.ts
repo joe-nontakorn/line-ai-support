@@ -5,9 +5,10 @@ import { Client } from '@line/bot-sdk';
 import connectDB from './config/mongodb.js';
 import { LineService } from './services/line.js';
 import apiRoutes from './routes/api.js';
+import cors from 'cors';
 
 const app = express();
-const PORT = process.env.PORT;
+const PORT = parseInt(process.env.PORT || '3002', 10);
 
 // LINE Bot Configuration
 const lineConfig = {
@@ -18,6 +19,14 @@ const lineConfig = {
 const lineClient = new Client(lineConfig);
 const lineService = new LineService(lineClient);
 
+
+app.use(cors({
+  origin: [
+    'http://localhost:5173',          // Vite dev
+    'http://asset.jastel.internal',   // Production frontend
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+}));
 // Connect to MongoDB
 connectDB().catch(err => {
   console.error('Failed to connect to MongoDB:', err);
@@ -33,7 +42,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req: Requ
     const signature = req.headers['x-line-signature'] as string;
     const channelSecret = lineConfig.channelSecret;
     const body = req.body; // Buffer from express.raw()
-    
+
     if (!signature) {
       res.status(401).send('Signature missing');
       return;
@@ -116,11 +125,13 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   });
 });
 
+
+
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server is running on port ${PORT}`);
-  console.log(`📍 Webhook URL: http://localhost:${PORT}/webhook`);
-  console.log(`📊 API URL: http://localhost:${PORT}/api`);
+  console.log(`📍 Webhook URL: http://0.0.0.0:${PORT}/webhook`);
+  console.log(`📊 API URL: http://0.0.0.0:${PORT}/api`);
 });
 
 export default app;

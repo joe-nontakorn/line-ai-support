@@ -19,6 +19,7 @@ export interface GeminiAnalysisResult {
 export interface ParsedGeminiResponse {
   content: string;
   type: ParsedResponseType;
+  topic?: string;
 }
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -91,12 +92,21 @@ const SYSTEM_PROMPT = `คุณชื่อ "Jastel IT Helper" เป็น AI 
 - ห้ามเปิดเผยข้อมูลส่วนตัวของพนักงานคนอื่น
 
 ═══════════════════════════════════════
-🏷️ แท็กหมวดหมู่ (ต้องใส่ทุกคำตอบ):
+🏷️ แท็กหมวดหมู่และหัวข้อปัญหา (ต้องใส่ทุกคำตอบ):
 ═══════════════════════════════════════
-ทุกคำตอบต้องปิดท้ายด้วยแท็กอย่างใดอย่างหนึ่ง:
+ทุกคำตอบต้องปิดท้ายด้วยแท็ก 2 ชนิดเสมอ:
+
+1. แท็กประเภทปัญหา (เลือกอย่างใดอย่างหนึ่ง):
 - [[TYPE:IT_PROBLEM]] → ช่วยแก้ปัญหา/วินิจฉัยอาการด้าน IT
 - [[TYPE:IT_INFO]] → ตอบคำถามให้ข้อมูลทั่วไปเกี่ยวกับ IT (ไม่ใช่แก้ปัญหา)
 - [[TYPE:OUT_OF_SCOPE]] → คำถามนอกขอบเขต ไม่เกี่ยวกับ IT
+
+2. แท็กหัวข้อปัญหา:
+สรุปหัวข้อปัญหาที่ผู้ใช้กำลังสอบถามแบบสั้นๆ (ไม่เกิน 5-6 คำ)
+- [[TOPIC:ลืมรหัสผ่าน Gmail]]
+- [[TOPIC:จอภาพดับเปิดไม่ติด]]
+- [[TOPIC:สอบถามการตั้งค่า VPN]]
+(หากยังสรุปไม่ได้ หรือเป็นการทักทาย ให้ใส่ [[TOPIC:ไม่ระบุ]])
 
 ตอบเป็นภาษาไทย กระชับ เข้าใจง่าย`;
 
@@ -244,11 +254,16 @@ export class GeminiService {
   parseResponse(aiResponse: string): ParsedGeminiResponse {
     const typeMatch = aiResponse.match(/\[\[TYPE:(.*?)\]\]/i);
     const type = this.normalizeType(typeMatch?.[1]);
-    const content = aiResponse.replace(/\[\[TYPE:.*?\]\]/gi, '').trim();
+    
+    const topicMatch = aiResponse.match(/\[\[TOPIC:(.*?)\]\]/i);
+    const topic = topicMatch ? topicMatch[1].trim() : undefined;
+
+    const content = aiResponse.replace(/\[\[TYPE:.*?\]\]/gi, '').replace(/\[\[TOPIC:.*?\]\]/gi, '').trim();
 
     return {
       content: content || 'ขออภัยครับ ไม่สามารถสร้างคำตอบได้ในขณะนี้',
       type,
+      topic,
     };
   }
 
@@ -279,7 +294,7 @@ export class GeminiService {
         );
 
         if (sanitizedHistory.length === 0) {
-          return 'กรุณาระบุปัญหาด้าน IT ที่ต้องการความช่วยเหลือครับ [[TYPE:IT_PROBLEM]]';
+          return 'กรุณาระบุปัญหาด้าน IT ที่ต้องการความช่วยเหลือครับ [[TYPE:IT_PROBLEM]] [[TOPIC:ไม่ระบุ]]';
         }
 
         const history = sanitizedHistory.slice(0, -1);
@@ -293,7 +308,7 @@ export class GeminiService {
             },
             {
               role: 'model',
-              parts: [{ text: 'เข้าใจครับ ผม Jastel IT Helper พร้อมช่วยเหลือเรื่อง IT Support ด้วยความยินดีครับ สอบถามปัญหาได้เลยครับ [[TYPE:IT_INFO]]' }],
+              parts: [{ text: 'เข้าใจครับ ผม Jastel IT Helper พร้อมช่วยเหลือเรื่อง IT Support ด้วยความยินดีครับ สอบถามปัญหาได้เลยครับ [[TYPE:IT_INFO]] [[TOPIC:ไม่ระบุ]]' }],
             },
             ...this.toGeminiHistory(history),
           ],
@@ -309,7 +324,7 @@ export class GeminiService {
         const responseText = result.response.text()?.trim();
 
         if (!responseText) {
-          return 'ขออภัยครับ ไม่สามารถประมวลผลคำตอบได้ในขณะนี้ กรุณาลองใหม่อีกครั้ง [[TYPE:IT_PROBLEM]]';
+          return 'ขออภัยครับ ไม่สามารถประมวลผลคำตอบได้ในขณะนี้ กรุณาลองใหม่อีกครั้ง [[TYPE:IT_PROBLEM]] [[TOPIC:ไม่ระบุ]]';
         }
 
         const parsed = this.parseResponse(responseText);
@@ -321,7 +336,7 @@ export class GeminiService {
         return responseText;
       } catch (error) {
         console.error('Gemini chat error:', error);
-        return 'ขออภัยครับ ระบบ AI ไม่สามารถตอบคำถามได้ในขณะนี้ กรุณาลองใหม่อีกครั้ง หรือติดต่อ IT Support [[TYPE:IT_PROBLEM]]';
+        return 'ขออภัยครับ ระบบ AI ไม่สามารถตอบคำถามได้ในขณะนี้ กรุณาลองใหม่อีกครั้ง หรือติดต่อ IT Support [[TYPE:IT_PROBLEM]] [[TOPIC:ไม่ระบุ]]';
       }
     });
   }
@@ -474,6 +489,12 @@ export class GeminiService {
 - บัญชีผู้ใช้, รหัสผ่าน
 - สิทธิ์การเข้าใช้งานระบบ
 
+ตัวอย่างเรื่องที่ไม่เกี่ยวกับ IT (ระบบจะไม่บันทึก):
+- เรื่องอาคารสถานที่ (ปลวกขึ้น, ท่อน้ำรั่ว, แอร์ไม่เย็น, หลอดไฟขาด)
+- เรื่องทั่วไป (รถเสีย, สภาพอากาศ, ข่าวสาร, ดูดวง)
+- เรื่องส่วนตัวหรือแผนกอื่นที่ไม่มีระบบสารสนเทศมาเกี่ยวข้อง
+- ข้อความที่บอกว่าไม่มีปัญหา, แก้ไขได้แล้ว, ทำได้สำเร็จแล้ว หรือแจ้งให้ทราบเฉยๆ (เช่น "sign in 365 บนมือถือได้", "เข้าสู่ระบบได้แล้ว", "ขอบคุณครับ")
+
 บทสนทนา:
 ${messages}
 
@@ -485,7 +506,7 @@ ${messages}
 
         const result = await this.withTimeout(
           this.model.generateContent(prompt),
-          20000,
+          40000,
         );
 
         const text = result.response.text()?.trim();

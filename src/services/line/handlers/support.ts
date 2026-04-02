@@ -3,6 +3,7 @@ import { MessagingService } from '../messaging.js';
 import { ConversationService } from '../conversation.js';
 import { ConversationDoc } from '../types.js';
 import geminiService from '../../gemini.js';
+import Ticket from '../../../models/Ticket.js';
 
 export async function promptForRating(
   replyToken: string,
@@ -95,6 +96,11 @@ export async function escalateToSupport(
     await conversationService.appendUserMessage(conversationToUpdate, text);
   } else if (conversationToUpdate.messages.length > 0) {
     issueSummary = await conversationService.analyzeIssueSafe(conversationToUpdate.messages);
+    if ((issueSummary === 'ไม่ระบุ' || issueSummary === 'ไม่สามารถสรุปปัญหาได้') && conversationToUpdate.issue && conversationToUpdate.issue !== 'ไม่ระบุ') {
+      issueSummary = conversationToUpdate.issue;
+    }
+  } else if (conversationToUpdate.issue && conversationToUpdate.issue !== 'ไม่ระบุ') {
+    issueSummary = conversationToUpdate.issue;
   }
 
   // ❌ ไม่ส่ง admin ถ้าไม่มีการระบุปัญหา
@@ -110,7 +116,7 @@ export async function escalateToSupport(
   if (!isItRelated) {
     // ปิดการสนทนาแล้วแจ้งผู้ใช้
     conversationToUpdate.status = 'closed';
-    conversationToUpdate.issue = issueSummary;
+    // ไม่บันทึก issue เพื่อไม่ให้ขึ้นในรายงานสรุปปัญหา IT
     await conversationToUpdate.save();
 
     return messaging.replyTextWithQuickReply(
@@ -120,14 +126,87 @@ export async function escalateToSupport(
     );
   }
 
+  // 🔎 แจ้งเรื่องอุปกรณ์ฮาร์ดแวร์
+  if (conversationToUpdate.status !== 'waiting_hardware_confirm') {
+    const hardwareKeywords = ['เครื่องเสีย', 'เปิดไม่ติด', 'จอดำ', 'จอฟ้า', 'อุปกรณ์', 'จอ', 'เมาส์', 'คีย์บอร์ด', 'ฮาร์ดแวร์', 'เครื่อง', 'พัง', 'ปริ้น', 'สแกน', 'printer', 'scanner'];
+    const isHardware = hardwareKeywords.some(kw => issueSummary.toLowerCase().includes(kw));
+
+    if (isHardware) {
+      try {
+        const res = await fetch(`http://172.16.1.16:3000/api/assets/search?employee_name=${encodeURIComponent(user.name)}`);
+        if (res.ok) {
+          const result = await res.json() as any;
+          if (result.success && result.data && result.data.length > 0) {
+            const assets = result.data.slice(0, 5); // Limit to 5 assets for quick replies
+            
+            conversationToUpdate.status = 'waiting_hardware_confirm';
+            conversationToUpdate.assetInfo = JSON.stringify(assets); // Save array
+            await conversationToUpdate.save();
+
+            if (assets.length === 1) {
+              const asset = assets[0];
+              const assetStr = `${asset.brand} ${asset.model} (S/N: ${asset.serial_no})`;
+              return messaging.replyTextWithQuickReply(
+                replyToken,
+                `ระบบตรวจพบว่าคุณใช้งานเครื่อง ${assetStr}\nปัญหาเกี่ยวข้องกับอุปกรณ์นี้ใช่หรือไม่ครับ?`,
+                [
+                  { label: '✅ ใช่', text: 'ใช่ เกี่ยวกับเครื่องนี้' },
+                  { label: '❌ ไม่ใช่', text: 'ไม่ใช่เครื่องนี้' }
+                ]
+              );
+            } else {
+              // Multiple assets
+              const quickReplies = assets.map((a: any) => ({
+                label: `✅ ${a.brand} ${a.serial_no}`.substring(0, 20),
+                text: `ใช่ เกี่ยวกับเครื่อง S/N: ${a.serial_no}`
+              }));
+              quickReplies.push({ label: '❌ ไม่ใช่สักเครื่อง', text: 'ไม่ใช่เครื่องนี้' });
+              
+              const listStr = assets.map((a: any, i: number) => `${i + 1}. ${a.brand} ${a.model}\n   S/N: ${a.serial_no}`).join('\n\n');
+              return messaging.replyTextWithQuickReply(
+                replyToken,
+                `ระบบตรวจพบว่าคุณมีอุปกรณ์หลายรายการ ปัญหาเกี่ยวข้องกับเครื่องใดครับ?\n\n${listStr}`,
+                quickReplies
+              );
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching asset info:', err);
+      }
+    }
+  }
+
   // ✅ ปิดการสนทนาและบันทึกข้อมูล
   conversationToUpdate.status = 'closed';
   conversationToUpdate.escalated = true;
   conversationToUpdate.issue = issueSummary;
   await conversationToUpdate.save();
 
+  let hardwareDetails = '';
+  if (conversationToUpdate.assetInfo) {
+    try {
+      const assetData = JSON.parse(conversationToUpdate.assetInfo);
+      if (assetData && !Array.isArray(assetData)) {
+        hardwareDetails = `\n💻 อุปกรณ์: ${assetData.brand} ${assetData.model} (S/N: ${assetData.serial_no})`;
+      }
+    } catch(e) {}
+  }
+
   // ✅ แจ้ง Admin Group (เฉพาะปัญหา IT ที่มีการระบุชัดเจน)
   const adminGroupId = process.env.ADMIN_GROUP_ID;
+
+  // บันทึกข้อมูลลง MongoDB ตามรูปแบบ
+  const newTicket = new Ticket({
+    name: user.name,
+    employeeId: user.employeeId,
+    department: user.department,
+    email: user.email || 'ไม่ระบุ',
+    phone: user.phone || 'ไม่ระบุ',
+    issueSummary: issueSummary + hardwareDetails
+  });
+  await newTicket.save();
+
   if (adminGroupId) {
     const adminMessage =
       `🚨 มีการแจ้งเคสใหม่จากพนักงาน\n\n` +
@@ -136,7 +215,7 @@ export async function escalateToSupport(
       `📁 แผนก: ${user.department}\n` +
       `📧 Email: ${user.email || 'ไม่ระบุ'}\n` +
       `📞 เบอร์ติดต่อ: ${user.phone || 'ไม่ระบุ'}\n\n` +
-      `📝 สรุปปัญหา: ${issueSummary}`;
+      `📝 สรุปปัญหา: ${issueSummary}${hardwareDetails}`;
 
     await messaging.pushText(adminGroupId, adminMessage);
   }

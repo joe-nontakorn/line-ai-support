@@ -108,6 +108,37 @@ export async function handleTextMessage(
     return escalateToSupport(replyToken, userId, undefined, activeConv, messaging, conversationService);
   }
 
+  if (text.startsWith('ใช่ เกี่ยวกับเครื่อง') || text === 'ไม่ใช่เครื่องนี้') {
+    const hwConv = await conversationService.getLatestConversationByStatuses(userId, ['waiting_hardware_confirm']);
+    if (hwConv) {
+      if (text === 'ไม่ใช่เครื่องนี้') {
+        hwConv.assetInfo = undefined;
+        await hwConv.save();
+      } else {
+        if (hwConv.assetInfo) {
+          try {
+            const assets = JSON.parse(hwConv.assetInfo);
+            if (Array.isArray(assets)) {
+              if (text === 'ใช่ เกี่ยวกับเครื่องนี้') {
+                hwConv.assetInfo = JSON.stringify(assets[0]);
+              } else {
+                const match = text.match(/S\/N:\s*(.+)$/);
+                if (match && match[1]) {
+                  const selected = assets.find((a: any) => a.serial_no === match[1]);
+                  hwConv.assetInfo = JSON.stringify(selected || assets[0]);
+                } else {
+                  hwConv.assetInfo = JSON.stringify(assets[0]);
+                }
+              }
+              await hwConv.save();
+            }
+          } catch(e) {}
+        }
+      }
+      return escalateToSupport(replyToken, userId, undefined, hwConv, messaging, conversationService);
+    }
+  }
+
   if (ESCALATE_KEYWORDS.some((keyword) => normalizedLower.includes(keyword))) {
     const activeConv = await conversationService.getLatestConversationByStatuses(userId, ['active']);
     if (activeConv && activeConv.messages.length > 0) {
@@ -126,14 +157,23 @@ export async function handleTextMessage(
   await messaging.showLoadingAnimation(userId, LOADING_SECONDS);
 
   const aiResponseRaw = await geminiService.chat(conversation.messages);
-  const { content: aiResponse, type: responseType } = geminiService.parseResponse(aiResponseRaw);
+  const { content: aiResponse, type: responseType, topic: responseTopic } = geminiService.parseResponse(aiResponseRaw);
 
   await conversationService.appendAssistantMessage(conversation, aiResponse);
+
+  if (responseTopic && responseTopic !== 'ไม่ระบุ') {
+    if (!conversation.issue || conversation.issue === '' || conversation.issue === 'ไม่ระบุ' || conversation.issue === 'ไม่สามารถสรุปปัญหาได้') {
+      conversation.issue = responseTopic;
+      await conversation.save();
+    }
+  }
 
   const quickReplies = [{ label: '👤 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' }];
   if (responseType === 'IT_PROBLEM' || responseType === 'IT_INFO') {
     quickReplies.unshift({ label: '✅ แก้ได้แล้ว', text: 'แก้ได้แล้ว' });
     quickReplies.unshift({ label: '❌ ยังแก้ไม่ได้', text: 'ยังแก้ไม่ได้' });
+  } else if (responseType === 'OUT_OF_SCOPE') {
+    quickReplies.unshift({ label: '🚀 เริ่มสนทนาใหม่', text: '/start' });
   }
 
   return messaging.replyTextWithQuickReply(replyToken, aiResponse, quickReplies);

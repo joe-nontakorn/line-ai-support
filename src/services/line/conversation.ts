@@ -42,7 +42,7 @@ export class ConversationService {
     await Conversation.updateMany(
       {
         lineUserId: userId,
-        status: { $in: ['active', 'waiting_escalation_issue', 'waiting_rating'] },
+        status: { $in: ['active', 'waiting_escalation_issue', 'waiting_rating', 'waiting_hardware_confirm'] },
       },
       {
         $set: {

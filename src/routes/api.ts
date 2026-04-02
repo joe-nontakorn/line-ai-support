@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import User from '../models/User.js';
 import Conversation from '../models/Conversation.js';
+import Ticket from '../models/Ticket.js';
 
 const router = express.Router();
 
@@ -69,12 +70,14 @@ router.get('/conversations', async (req: Request, res: Response) => {
       limit = '50', 
       skip = '0', 
       status, 
-      resolved 
+      resolved,
+      lineUserId
     } = req.query;
 
     const filter: any = {};
     if (status) filter.status = status;
     if (resolved !== undefined) filter.resolved = resolved === 'true';
+    if (lineUserId) filter.lineUserId = lineUserId;
 
     const conversations = await Conversation.find(filter)
       .sort({ createdAt: -1 })
@@ -202,7 +205,9 @@ router.get('/issues', async (req: Request, res: Response) => {
     const { limit = '10' } = req.query;
 
     const issues = await Conversation.aggregate([
-      { $match: { issue: { $ne: '' } } },
+      { $match: { 
+          issue: { $nin: ['', null, 'ไม่ระบุ', 'ไม่สามารถสรุปปัญหาได้'] } 
+      } },
       { 
         $group: {
           _id: '$issue',
@@ -272,6 +277,89 @@ router.get('/ratings', async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch ratings'
+    });
+  }
+});
+
+/**
+ * GET /api/tickets - ดึงรายการการแจ้งเคส IT (Tickets)
+ */
+router.get('/tickets', async (req: Request, res: Response) => {
+  try {
+    const { limit = '50', skip = '0', status } = req.query;
+
+    const filter: any = {};
+    if (status !== undefined) {
+      filter.status = parseInt(status as string, 10);
+    }
+
+    const tickets = await Ticket.find(filter)
+      .sort({ reportedAt: -1 })
+      .limit(parseInt(limit as string))
+      .skip(parseInt(skip as string))
+      .lean();
+
+    const total = await Ticket.countDocuments(filter);
+
+    res.json({
+      success: true,
+      data: {
+        tickets,
+        pagination: {
+          total,
+          limit: parseInt(limit as string),
+          skip: parseInt(skip as string),
+          hasMore: (parseInt(skip as string) + parseInt(limit as string)) < total
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching tickets:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch tickets'
+    });
+  }
+});
+
+/**
+ * PUT /api/tickets/:id/status - อัปเดตสถานะของ Ticket
+ * Body: { status: 0 | 1 }
+ */
+router.put('/tickets/:id/status', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (status !== 0 && status !== 1) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid status value. Must be 0 or 1.'
+      });
+    }
+
+    const updatedTicket = await Ticket.findByIdAndUpdate(
+      id,
+      { status },
+      { new: true }
+    );
+
+    if (!updatedTicket) {
+      return res.status(404).json({
+        success: false,
+        error: 'Ticket not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: updatedTicket
+    });
+  } catch (error) {
+    console.error('Error updating ticket status:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update ticket status'
     });
   }
 });

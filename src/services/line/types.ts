@@ -4,6 +4,7 @@ export type ConversationStatus =
   | 'active'
   | 'waiting_rating'
   | 'waiting_escalation_issue'
+  | 'waiting_hardware_confirm'
   | 'closed';
 
 export type ParsedResponseType = 'IT_PROBLEM' | 'IT_INFO' | 'OUT_OF_SCOPE';
@@ -54,6 +55,7 @@ export type ConversationDoc = IConversation & {
   escalated?: boolean;
   rating?: number;
   issue?: string;
+  assetInfo?: string;
   nonItCount?: number;
   status: ConversationStatus;
   sessionId: string;
