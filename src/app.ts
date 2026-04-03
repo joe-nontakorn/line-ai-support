@@ -4,6 +4,7 @@ import { middleware, WebhookEvent } from '@line/bot-sdk';
 import { Client } from '@line/bot-sdk';
 import connectDB from './config/mongodb.js';
 import { LineService } from './services/line.js';
+import { lineClient } from './services/line/client.js';
 import apiRoutes from './routes/api.js';
 import cors from 'cors';
 
@@ -11,12 +12,8 @@ const app = express();
 const PORT = parseInt(process.env.PORT || '3002', 10);
 
 // LINE Bot Configuration
-const lineConfig = {
-  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN as string,
-  channelSecret: process.env.LINE_CHANNEL_SECRET as string
-};
+const channelSecret = process.env.LINE_CHANNEL_SECRET as string;
 
-const lineClient = new Client(lineConfig);
 const lineService = new LineService(lineClient);
 
 
@@ -40,7 +37,6 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req: Requ
   try {
     // Manual signature validation to avoid generic raw-body issues in Bun
     const signature = req.headers['x-line-signature'] as string;
-    const channelSecret = lineConfig.channelSecret;
     const body = req.body; // Buffer from express.raw()
 
     if (!signature) {
@@ -58,10 +54,14 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req: Requ
     const bodyJson = JSON.parse(body.toString('utf8'));
     const events: WebhookEvent[] = bodyJson.events;
 
-    await Promise.all(
+    // ตอบกลับ LINE ทันที (ป้องกัน Timeout 1-3 วินาที ที่ทำให้ LINE ส่ง Webhook ซ้ำ และทำให้ AI สร้าง Ticket เบิ้ล หรือติดปัญหา Token Rate Limit)
+    res.status(200).json({ status: 'ok' });
+
+    // ประมวลผลในเบื้องหลัง
+    Promise.all(
       events.map(async (event: WebhookEvent) => {
         if (event.type === 'message') {
-          // ป้องกัน bot ทำงานกับข้อความใน group/room (ให้ bot ส่งข้อมูลไปเฉยๆ โดยไม่ตอบโต้ในกลุ่ม)
+          // ป้องกัน bot ทำงานกับข้อความใน group/room
           if (event.source.type === 'group' || event.source.type === 'room') {
             const groupId = (event.source as any).groupId || (event.source as any).roomId;
             console.log(`Received message in group/room. ID: ${groupId}`);
@@ -76,25 +76,27 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req: Requ
             console.log(`Unsupported message type: ${messageType}`);
           }
         } else if (event.type === 'join') {
-          // เมื่อ Bot ถูกดึงเข้ากลุ่ม ให้พิมพ์ ID กลุ่มออกมาเพื่อนำไปใส่ ADMIN_GROUP_ID
           console.log(`Bot joined a ${event.source.type}! ID: ${(event.source as any).groupId || (event.source as any).roomId}`);
         } else if (event.type === 'leave') {
-          console.log(`Bot left a ${event.source.type}! ID: ${(event.source as any).groupId || (event.source as any).roomId}. Either kicked or API setting denies group join.`);
+          console.log(`Bot left a ${event.source.type}! ID: ${(event.source as any).groupId || (event.source as any).roomId}`);
         } else if (event.type === 'follow') {
           await lineService.handleFollow(event);
         } else {
           console.log(`Received event type: ${event.type}`);
         }
       })
-    );
-
-    res.json({ status: 'ok' });
-  } catch (error: any) {
-    console.error('Webhook error:', error);
-    res.status(500).json({
-      status: 'error',
-      message: error.message
+    ).catch(err => {
+      console.error('Background Webhook processing error:', err);
     });
+
+  } catch (error: any) {
+    console.error('Webhook payload error:', error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        status: 'error',
+        message: error.message
+      });
+    }
   }
 });
 

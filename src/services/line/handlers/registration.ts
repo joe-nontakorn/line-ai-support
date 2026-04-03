@@ -1,3 +1,4 @@
+// src/services/line/handlers/registration.ts
 import { MessageAPIResponseBase } from '@line/bot-sdk';
 import { MessagingService } from '../messaging.js';
 import { RegistrationService } from '../registration.js';
@@ -101,6 +102,18 @@ export async function handleRegistration(
       return messaging.replyText(replyToken, '❌ รหัส OTP ไม่ถูกต้อง กรุณาตรวจสอบแล้วลองพิมพ์ใหม่อีกครั้ง (หรือพิมพ์ "ยกเลิก" เพื่อทำรายการใหม่)');
     }
 
+    // 📱 Check if phone is missing
+    if (!state.tempPayload.phone) {
+      registration.setState(userId, {
+        ...state,
+        step: 3
+      });
+      return messaging.replyText(
+        replyToken,
+        '✅ ยืนยันรหัส OTP สำเร็จครับ\n\nแต่ในระบบยังไม่มีข้อมูล **เบอร์โทรศัพท์** ของคุณ\nกรุณาพิมพ์เบอร์โทรศัพท์เพื่อใช้ในการติดต่อกลับครับ (เช่น 0812345678):'
+      );
+    }
+
     await conversation.saveOrUpdateUser(userId, state.tempPayload);
     registration.clearState(userId);
 
@@ -109,6 +122,41 @@ export async function handleRegistration(
     return messaging.replyTextWithQuickReply(
       replyToken,
       `ลงทะเบียนสำเร็จ! ✅ ยืนยันตัวตนผ่าน OTP เรียบร้อยครับ\n\n${contactInfo}\n\nพิมพ์คำถามหรือปัญหาที่ต้องการความช่วยเหลือได้เลยครับ 😊\n\nหรือพิมพ์ /help เพื่อดูคำแนะนำ`,
+      [{ label: '👤 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' }],
+    );
+  }
+
+  if (state.step === 3) {
+    if (text.trim() === 'ยกเลิก') {
+      registration.clearState(userId);
+      return messaging.replyText(replyToken, 'ยกเลิกการลงทะเบียนแล้วครับ');
+    }
+
+    if (!state.tempPayload) {
+      registration.setState(userId, { step: 1 });
+      return messaging.replyText(replyToken, 'เซสชั่นการลงทะเบียนไม่ถูกต้อง กรุณาเริ่มใหม่ครับ');
+    }
+
+    const phone = normalizePhone(text.trim());
+    if (phone.length < 9 || isNaN(Number(phone))) {
+      return messaging.replyText(replyToken, '❌ รูปแบบเบอร์โทรศัพท์ไม่ถูกต้อง กรุณาระบุรหัส 9-10 หลัก (เช่น 0812345678) ครับ:');
+    }
+
+    // Update payload
+    state.tempPayload.phone = phone;
+
+    // 📡 Update backend API
+    await registration.updateEmployeePhone(state.tempPayload.employeeId, phone);
+
+    // 💾 Save to DB
+    await conversation.saveOrUpdateUser(userId, state.tempPayload);
+    registration.clearState(userId);
+
+    const contactInfo = `ชื่อ: ${state.tempPayload.name}\nรหัสพนักงาน: ${state.tempPayload.employeeId}\nแผนก: ${state.tempPayload.department}\nEmail: ${state.tempPayload.email || 'ไม่ระบุ'}\nเบอร์ติดต่อ: ${phone}`;
+
+    return messaging.replyTextWithQuickReply(
+      replyToken,
+      `ลงทะเบียนสำเร็จ! ✅ ระบบได้บันทึกข้อมูลและเบอร์โทรศัพท์ของคุณเรียบร้อยแล้วครับ\n\n${contactInfo}\n\nพิมพ์คำถามหรือปัญหาที่ต้องการความช่วยเหลือได้เลยครับ 😊`,
       [{ label: '👤 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' }],
     );
   }

@@ -1,7 +1,8 @@
 // service/gemini.ts
 import { GoogleGenerativeAI, GenerativeModel } from '@google/generative-ai';
+import Ticket from '../models/Ticket.js';
 
-export type MessageRole = 'user' | 'assistant';
+export type MessageRole = 'user' | 'assistant' | 'system';
 
 export interface IMessage {
   role: MessageRole;
@@ -165,6 +166,41 @@ export class GeminiService {
     this.visionModel = genAI.getGenerativeModel({ model: MODEL_NAME });
   }
 
+  private async searchRelatedTickets(queryText: string): Promise<string> {
+    try {
+      if (!queryText || queryText.trim().length < 3) return '';
+      
+      const tickets = await Ticket.find(
+        { 
+          $text: { $search: queryText },
+          status: 'resolved',
+          resolutionComment: { $ne: '' }
+        },
+        { score: { $meta: "textScore" } }
+      )
+      .sort({ score: { $meta: "textScore" } })
+      .limit(3)
+      .lean();
+
+      if (!tickets || tickets.length === 0) return '';
+
+      let contextStr = '\n\n═══════════════════════════════════════\n';
+      contextStr += '📚 ข้อมูลอ้างอิงจากประวัติการแก้ปัญหาในอดีต (Knowledge Base ของ Jastel):\n';
+      contextStr += 'ด้านล่างนี้คือประวัติการซ่อมตั๋วที่มีปัญหาคล้ายคลึงกันและได้รับการแก้ไขสำเร็จแล้ว ให้ใช้เป็นแนวทางอ้างอิงในการตอบหรือเสนอแนะ\n\n';
+      
+      tickets.forEach((t, i) => {
+        contextStr += `[ประวัติเคสที่ ${i+1}] อาการที่แจ้ง: ${t.issueSummary}\n`;
+        contextStr += `🟢 วิธีแก้จนสำเร็จ (จากฝ่าย IT): ${t.resolutionComment}\n\n`;
+      });
+      contextStr += '═══════════════════════════════════════\n';
+
+      return contextStr;
+    } catch (e) {
+      console.error('Error in RAG searchRelatedTickets:', e);
+      return '';
+    }
+  }
+
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -299,12 +335,15 @@ export class GeminiService {
 
         const history = sanitizedHistory.slice(0, -1);
         const lastMessage = sanitizedHistory[sanitizedHistory.length - 1];
+        
+        // RAG System: เอาข้อความล่าสุดของผู้ใช้ไปค้นในอดีต (Ticket DB)
+        const searchContext = await this.searchRelatedTickets(lastMessage.content);
 
         const chat = this.model.startChat({
           history: [
             {
               role: 'user',
-              parts: [{ text: SYSTEM_PROMPT }],
+              parts: [{ text: SYSTEM_PROMPT + searchContext }],
             },
             {
               role: 'model',
@@ -521,6 +560,75 @@ ${messages}
         return 'ไม่สามารถสรุปปัญหาได้';
       }
     });
+  }
+
+  async clarifyIssue(issueSummary: string): Promise<string> {
+    await this.analysisSemaphore.acquire();
+    try {
+      const prompt = `คุณคือผู้ช่วยฝ่าย IT Support ที่มีความสุภาพและต้องการให้ข้อมูลเบื้องต้นกับเจ้าหน้าที่ฝ่ายเทคนิคให้มากที่สุด
+
+หากผู้ใช้แจ้งปัญหาที่สั้นหรือกว้างจนเกินไป (เช่น "ช่วยด้วย", "มีปัญหา", "พัง", "เข้าไม่ได้") โดยไม่บอกรายละเอียดอาการ หรือระบบที่ใช้
+จงถามคำถามเจาะจง 1 ประโยคเพื่อให้ผู้ใช้ให้รายละเอียดเพิ่ม (เช่น "รบกวนแจ้งระบบหรือโปรแกรมที่คุณพบปัญหาเพื่อการตรวจสอบที่รวดเร็วครับ")
+
+แต่ถ้าผู้ใช้แจ้งรายละเอียดมาพอสมควรแล้ว (เช่น "เข้า Wi-Fi ชั้น 7 ไม่ได้", "Printer HP ที่ MTN พิมพ์ไม่ออก") ให้ตอบเพียงคำเดียวว่า: CLEAR
+
+ปัญหาที่ได้รับ: "${issueSummary}"
+
+กติกา:
+- ถามเป็นภาษาไทยอย่างสุภาพ
+- ถามเพียงประโยคเดียวสั้นๆ
+- ห้ามถามย้อนความเดิม
+- ถ้าชัดเจนแล้วต้องตอบ CLEAR เท่านั้น`;
+
+      const result = await this.withTimeout(
+        this.model.generateContent(prompt),
+        20000,
+      );
+
+      const text = result.response.text()?.trim() || 'CLEAR';
+      return text;
+    } catch (error) {
+      console.error('Gemini clarify issue error:', error);
+      return 'CLEAR'; // Fallback to clear if AI fails
+    } finally {
+      this.analysisSemaphore.release();
+    }
+  }
+
+  async getTroubleshootingAdvice(issueSummary: string): Promise<string> {
+    await this.analysisSemaphore.acquire();
+    try {
+      const searchContext = await this.searchRelatedTickets(issueSummary);
+
+      const prompt = `คุณคือผู้เชี่ยวชาญด้าน IT Support
+ผู้ใช้กำลังประสบปัญหา: "${issueSummary}"
+
+${searchContext ? `และนี่คือประวัติของบริษัทที่มีอาการคล้ายกัน ซึ่งเพิ่งถูกดำเนินการแก้ไขสำเร็จ:\n${searchContext}` : ''}
+
+กรุณาแนะนำวิธีแก้ไขเบื้องต้น 2-3 ข้อสั้นๆ ที่พนักงานสามารถทำได้ด้วยตัวเอง (Self-Service)
+เพื่อประหยัดเวลาและอาจแก้ปัญหาได้ทันที
+
+กติกา:
+- ใช้ภาษาไทยที่เป็นกันเองและสุภาพ
+- ตอบเป็นข้อๆ สั้นๆ (Bullet points)
+- รวมกันไม่เกิน 100-150 คำ
+- เน้นสิ่งที่ทำได้ง่าย เช่น "รีสตาร์ทเครื่อง", "เช็กสาย LAN", "ลบ Cache"
+- ถ้าชื่อปัญหากว้างเกินไป ให้แนะนำการเช็กพื้นฐานกลางๆ
+
+คำแนะนำที่ต้องการ:`;
+
+      const result = await this.withTimeout(
+        this.model.generateContent(prompt),
+        30000,
+      );
+
+      return result.response.text()?.trim() || 'ขออภัยครับ ไม่สามารถสร้างคำแนะนำได้ในขณะนี้';
+    } catch (error) {
+      console.error('Gemini troubleshooting error:', error);
+      return 'กรุณาลองรีสตาร์ทเครื่องหรืออุปกรณ์เบื้องต้นดูนะครับ';
+    } finally {
+      this.analysisSemaphore.release();
+    }
   }
 
   /**

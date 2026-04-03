@@ -7,6 +7,7 @@ import { GREETING_KEYWORDS, ESCALATE_KEYWORDS } from '../constants.js';
 import { handleRating, promptForRating, promptForEscalationIssue, escalateToSupport } from './support.js';
 import geminiService from '../../gemini.js';
 import { LOADING_SECONDS } from '../constants.js';
+import Ticket from '../../../models/Ticket.js';
 
 export async function handleFollow(
   event: FollowEvent,
@@ -29,14 +30,15 @@ export async function handleFollow(
         '⚠️ ประกาศสำคัญก่อนใช้งาน:\n' +
         '- ระบบนี้ออกแบบมาเพื่อพนักงานในบริษัทที่ได้รับการยืนยันตัวตนแล้วเท่านั้น\n' +
         '- การสนทนาจะถูกบันทึกเพื่อนำไปปรับปรุงระบบและให้บริการในภายหลัง\n' +
-        '- รบกวนสอบถามเฉพาะปัญหาที่เกี่ยวข้องกับงานด้าน IT Support เท่านั้น\n\n' +
+        '- รบกวนสอบถามเฉพาะปัญหาที่เกี่ยวข้องกับงานด้าน IT Support เท่านั้น\n' +
+        '- 📌 คุณสามารถส่ง **รูปภาพหน้าจอปัญหา** หรือ **ไฟล์ต่าง ๆ (เช่น PDF)** ให้ AI วิเคราะห์ได้เลยครับ\n\n' +
         'กรุณาลงทะเบียนเพื่อเริ่มใช้งาน โดยพิมพ์ **รหัสพนักงาน** หรือ **Email** อย่างใดอย่างหนึ่ง เพื่อให้ระบบตรวจสอบครับ:'
       );
     }
 
     return messaging.replyTextWithQuickReply(
       replyToken,
-      `ยินดีต้อนรับกลับมาครับคุณ ${user.name}! มีปัญหาเรื่อง IT สอบถามเข้ามาได้เลยครับ 😊\n\nกรุณากดปุ่มเพื่อเริ่มสนทนาใหม่ 👇`,
+      `ยินดีต้อนรับกลับมาครับคุณ ${user.name}! มีปัญหาเรื่อง IT สอบถามเข้ามาได้เลยครับ 😊\n\n📌 สามารถแนบส่ง **รูปภาพแคปหน้าจอ** หรือ **ไฟล์ PDF/เอกสารต่าง ๆ** แจ้งปัญหาได้เลยครับ\n\nกรุณากดปุ่มเพื่อเริ่มสนทนาใหม่ 👇`,
       [
         { label: '👤 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' },
         { label: '🚀 เริ่มสนทนาใหม่', text: '/start' },
@@ -56,6 +58,33 @@ export async function handleTextMessage(
   conversationService: ConversationService
 ): Promise<MessageAPIResponseBase | undefined> {
   const normalizedLower = text.toLowerCase().trim();
+
+  // ตรวจสอบว่าผู้ใช้พิมพ์ถามสถานะ Ticket หรือไม่
+  const ticketMatch = text.match(/TIC-\d{8}-\d{3}/i);
+  if (ticketMatch) {
+    const ticketId = ticketMatch[0].toUpperCase();
+    const ticket = await Ticket.findOne({ ticketId });
+    if (ticket) {
+      let statusText = 'รอดำเนินการ (Pending)';
+      if (ticket.status === 'in_progress') statusText = 'กำลังดำเนินการ 🔧';
+      else if (ticket.status === 'resolved') statusText = 'แก้ไขสำเร็จแล้ว ✨';
+
+      let replyMsg = `📊 สถานะ Ticket: ${ticketId}\n\n📝 รายละเอียด: ${ticket.issueSummary}\n📌 สถานะปัจจุบัน: ${statusText}`;
+      
+      if (ticket.status === 'resolved' && ticket.resolutionComment) {
+        replyMsg += `\n✅ วิธีแก้ไข: ${ticket.resolutionComment}`;
+      }
+
+      return messaging.replyTextWithQuickReply(
+        replyToken,
+        replyMsg,
+        [
+          { label: '🚀 เริ่มสนทนาใหม่', text: '/start' },
+          { label: '👤 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' }
+        ]
+      );
+    }
+  }
 
   if (text === '/start' || text === 'เริ่มสนทนาใหม่') {
     // ปิดการสนทนาทั้งหมดที่ยังค้างอยู่ก่อนเสมอ
@@ -103,9 +132,17 @@ export async function handleTextMessage(
   }
 
   if (text === 'ยังแก้ไม่ได้') {
-    // ดึง conversation ที่มีอยู่เพื่อให้ระบบวิเคราะห์สรุปปัญหาได้
-    const activeConv = await conversationService.getLatestConversationByStatuses(userId, ['active']);
+    const activeConv = await conversationService.getLatestConversationByStatuses(userId, ['active', 'waiting_troubleshoot_confirm', 'waiting_hardware_confirm']);
     return escalateToSupport(replyToken, userId, undefined, activeConv, messaging, conversationService);
+  }
+
+  if (text === 'แก้ได้แล้ว') {
+    const activeConv = await conversationService.getLatestConversationByStatuses(userId, ['active', 'waiting_troubleshoot_confirm', 'waiting_hardware_confirm']);
+    if (activeConv) {
+      activeConv.resolved = true;
+      await activeConv.save();
+      return promptForRating(replyToken, userId, activeConv, messaging, conversationService);
+    }
   }
 
   if (text.startsWith('ใช่ เกี่ยวกับเครื่อง') || text === 'ไม่ใช่เครื่องนี้') {

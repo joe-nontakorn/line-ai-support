@@ -105,6 +105,18 @@ export class RegistrationService {
   }
 
   async checkDuplicateUser(match: any, currentUserId: string): Promise<boolean> {
+    // โหมด Dev อนุญาตให้สลับ LINE ID ได้อิสระ (ลบข้อมูลการผูกบัญชีเก่าออกให้เลย)
+    if (process.env.NODE_ENV !== 'production') {
+       await User.deleteMany({
+         $or: [
+           { employeeId: match.emp_id },
+           { email: match.email && match.email.trim() !== '' ? match.email : 'INVALID_EMAIL_IGNORE' }
+         ],
+         lineUserId: { $ne: currentUserId }
+       });
+       return false;
+    }
+
     const existingUser = await User.findOne({ 
       $or: [
         { employeeId: match.emp_id },
@@ -112,5 +124,22 @@ export class RegistrationService {
       ]
     });
     return !!(existingUser && existingUser.lineUserId !== currentUserId);
+  }
+
+  async updateEmployeePhone(employeeId: string, phone: string): Promise<boolean> {
+    try {
+      const response = await fetchWithTimeout(`http://172.16.1.16:3000/api/employees/update/${encodeURIComponent(employeeId)}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ phone })
+      }, 10000);
+
+      return response.ok;
+    } catch (error) {
+      console.error('Error updating employee phone:', error);
+      return false;
+    }
   }
 }

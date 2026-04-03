@@ -5,12 +5,13 @@ export type ConversationStatus =
   | 'waiting_rating'
   | 'waiting_escalation_issue'
   | 'waiting_hardware_confirm'
+  | 'waiting_troubleshoot_confirm'
   | 'closed';
 
 export type ParsedResponseType = 'IT_PROBLEM' | 'IT_INFO' | 'OUT_OF_SCOPE';
 
 export interface RegistrationState {
-  step: 1 | 2;
+  step: 1 | 2 | 3;
   otp?: string;
   otpExpiresAt?: number;
   tempPayload?: {
@@ -43,7 +44,7 @@ export interface ParsedGeminiResponse {
 }
 
 export interface ConversationMessage {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp: Date;
 }

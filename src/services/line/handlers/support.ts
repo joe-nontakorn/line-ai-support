@@ -1,3 +1,4 @@
+// src/services/line/handlers/support.ts
 import { MessageAPIResponseBase } from '@line/bot-sdk';
 import { MessagingService } from '../messaging.js';
 import { ConversationService } from '../conversation.js';
@@ -91,16 +92,22 @@ export async function escalateToSupport(
     conversationToUpdate = await conversationService.createNewConversation(userId, 'active');
   }
 
+  if (!conversationToUpdate) return;
+
   if (text) {
-    issueSummary = text.trim();
     await conversationService.appendUserMessage(conversationToUpdate, text);
-  } else if (conversationToUpdate.messages.length > 0) {
+  }
+
+  // ใช้ AI สรุปปัญหาจากประวัติทั้งหมด (เพื่อให้ครอบคลุมสิ่งที่เพิ่งพิมพ์มาด้วย)
+  if (conversationToUpdate.messages.length > 0) {
     issueSummary = await conversationService.analyzeIssueSafe(conversationToUpdate.messages);
-    if ((issueSummary === 'ไม่ระบุ' || issueSummary === 'ไม่สามารถสรุปปัญหาได้') && conversationToUpdate.issue && conversationToUpdate.issue !== 'ไม่ระบุ') {
-      issueSummary = conversationToUpdate.issue;
-    }
   } else if (conversationToUpdate.issue && conversationToUpdate.issue !== 'ไม่ระบุ') {
     issueSummary = conversationToUpdate.issue;
+  }
+
+  // สำรอง: ถ้า AI ยังสรุปไม่ได้แต่มีข้อความล่าสุด ให้ใช้ข้อความนั้นไปก่อน
+  if ((issueSummary === 'ไม่ระบุ' || issueSummary === 'ไม่สามารถสรุปปัญหาได้') && text) {
+    issueSummary = text.trim();
   }
 
   // ❌ ไม่ส่ง admin ถ้าไม่มีการระบุปัญหา
@@ -125,49 +132,164 @@ export async function escalateToSupport(
       [{ label: '🚀 เริ่มสนทนาใหม่', text: '/start' }],
     );
   }
+  const isSkip = text?.trim() === 'ข้าม';
+  if (!isSkip && conversationToUpdate.status !== 'waiting_hardware_confirm' && conversationToUpdate.status !== 'waiting_troubleshoot_confirm') {
+    // 🔍 ป้องกัน Loop โดยเช็กจำนวนข้อความในสถานะนี้ (ถ้าถามไปแล้ว 2 ครั้งยังไม่เคลียร์ ก็ให้ผ่านไป)
+    const userMessagesInState = conversationToUpdate.messages.filter(m => m.role === 'user').length;
+    
+    // ถ้า issue สั้นเกินไปหรือกว้างเกินไป (เช่น "ช่วยด้วย") ถึงจะถาม clarification
+    // แต่ถ้ามีข้อมูลพอสมควรแล้ว ให้ผ่านไปขั้นตอนถัดไปเลย เพื่อความรวดเร็วตามความต้องการผู้ใช้
+    if (userMessagesInState <= 1 && issueSummary.length < 15) {
+      const clarification = await geminiService.clarifyIssue(issueSummary);
+      if (clarification && clarification !== 'CLEAR') {
+        await conversationToUpdate.save();
+        return messaging.replyText(
+          replyToken,
+          `${clarification}\n\n(หรือพิมพ์ "ข้าม" เพื่อแจ้งเจ้าหน้าที่ทันที)`
+        );
+      }
+    }
+  }
 
-  // 🔎 แจ้งเรื่องอุปกรณ์ฮาร์ดแวร์
-  if (conversationToUpdate.status !== 'waiting_hardware_confirm') {
-    const hardwareKeywords = ['เครื่องเสีย', 'เปิดไม่ติด', 'จอดำ', 'จอฟ้า', 'อุปกรณ์', 'จอ', 'เมาส์', 'คีย์บอร์ด', 'ฮาร์ดแวร์', 'เครื่อง', 'พัง', 'ปริ้น', 'สแกน', 'printer', 'scanner'];
-    const isHardware = hardwareKeywords.some(kw => issueSummary.toLowerCase().includes(kw));
+  // ถ้าพิมพ์ว่า "ข้าม" ให้ข้ามการกรองรายละเอียด ดึง issue เดิมจากประวัติ
+  if (isSkip) {
+    issueSummary = await conversationService.analyzeIssueSafe(
+      conversationToUpdate.messages
+        .filter(m => m.content !== 'ข้าม')
+        .map(m => ({ role: m.role, content: m.content, timestamp: m.timestamp }))
+    );
+  }
 
-    if (isHardware) {
+  // 🔎 แจ้งเรื่องอุปกรณ์ฮาร์ดแวร์ (ยกเว้นรอยืนยันฮาร์ดแวร์เดิม หรือกำลังรอคอนเฟิร์มวิธีแก้ปัญหา หรือผู้ใช้กดข้าม)
+  if (!isSkip && conversationToUpdate.status !== 'waiting_hardware_confirm' && conversationToUpdate.status !== 'waiting_troubleshoot_confirm') {
+    const printerKeywords = ['ปริ้น', 'printer', 'เครื่องพิมพ์', 'สแกน', 'scanner', 'หมึก', 'หมึกพิมพ์'];
+    const computerKeywords = ['เครื่องเสีย', 'เปิดไม่ติด', 'จอดำ', 'จอฟ้า', 'คอม', 'โน๊ตบุ๊ค', 'laptop', 'desktop', 'พีซี', 'pc'];
+    const otherHwKeywords = ['อุปกรณ์', 'จอ', 'เมาส์', 'คีย์บอร์ด', 'ฮาร์ดแวร์', 'พัง', 'usb', 'monitor', 'keyboard', 'mouse'];
+
+    const summaryLower = issueSummary.toLowerCase();
+    const isPrinter = printerKeywords.some(kw => summaryLower.includes(kw));
+    const isComputer = computerKeywords.some(kw => summaryLower.includes(kw));
+    const isOtherHw = otherHwKeywords.some(kw => summaryLower.includes(kw));
+
+    if (isPrinter || isComputer || isOtherHw) {
       try {
-        const res = await fetch(`http://172.16.1.16:3000/api/assets/search?employee_name=${encodeURIComponent(user.name)}`);
+        let apiUrl = `http://172.16.1.16:3000/api/assets/search?`;
+        let useFilter = false;
+
+        if (isPrinter) {
+          // Shared devices (Printer/Scanner)
+          apiUrl += `type_name=Printer`;
+          useFilter = true; // Use local filter as fallback/backup
+        } else {
+          // Personal devices (Search by employee name)
+          apiUrl += `employee_name=${encodeURIComponent(user!.name)}`;
+          if (isComputer) useFilter = true;
+        }
+
+        const res = await fetch(apiUrl);
         if (res.ok) {
           const result = await res.json() as any;
           if (result.success && result.data && result.data.length > 0) {
-            const assets = result.data.slice(0, 5); // Limit to 5 assets for quick replies
-            
-            conversationToUpdate.status = 'waiting_hardware_confirm';
-            conversationToUpdate.assetInfo = JSON.stringify(assets); // Save array
-            await conversationToUpdate.save();
+            let assets = result.data.filter((a: any) => {
+              const status = (a.status || '').toLowerCase();
+              return status !== 'retired' && status !== 'disposed';
+            });
 
-            if (assets.length === 1) {
-              const asset = assets[0];
-              const assetStr = `${asset.brand} ${asset.model} (S/N: ${asset.serial_no})`;
-              return messaging.replyTextWithQuickReply(
-                replyToken,
-                `ระบบตรวจพบว่าคุณใช้งานเครื่อง ${assetStr}\nปัญหาเกี่ยวข้องกับอุปกรณ์นี้ใช่หรือไม่ครับ?`,
-                [
-                  { label: '✅ ใช่', text: 'ใช่ เกี่ยวกับเครื่องนี้' },
-                  { label: '❌ ไม่ใช่', text: 'ไม่ใช่เครื่องนี้' }
-                ]
-              );
-            } else {
-              // Multiple assets
-              const quickReplies = assets.map((a: any) => ({
-                label: `✅ ${a.brand} ${a.serial_no}`.substring(0, 20),
-                text: `ใช่ เกี่ยวกับเครื่อง S/N: ${a.serial_no}`
-              }));
-              quickReplies.push({ label: '❌ ไม่ใช่สักเครื่อง', text: 'ไม่ใช่เครื่องนี้' });
-              
-              const listStr = assets.map((a: any, i: number) => `${i + 1}. ${a.brand} ${a.model}\n   S/N: ${a.serial_no}`).join('\n\n');
-              return messaging.replyTextWithQuickReply(
-                replyToken,
-                `ระบบตรวจพบว่าคุณมีอุปกรณ์หลายรายการ ปัญหาเกี่ยวข้องกับเครื่องใดครับ?\n\n${listStr}`,
-                quickReplies
-              );
+            // Filter for specific types if context is known
+            if (useFilter) {
+              if (isPrinter) {
+                assets = assets.filter((a: any) => a.type_name === 'Printer');
+
+                // Smart Filter: ดักจับข้อมูล "ชั้น" และ "ขาวดำ/สี" จากข้อความสรุปปัญหา
+                const floorMatch = summaryLower.match(/ชั้น\s*(\d+)/i) || summaryLower.match(/(\d+)\s*f/i);
+                if (floorMatch) {
+                  const floorNum = floorMatch[1] || floorMatch[2];
+                  const floorFiltered = assets.filter((a: any) => {
+                    const loc = (a.location_name || '').toLowerCase();
+                    const desc = (a.description || '').toLowerCase();
+                    return loc.includes(`${floorNum}f`) || loc.includes(`ชั้น ${floorNum}`) || loc.includes(`ชั้น${floorNum}`) ||
+                           desc.includes(`${floorNum}f`) || desc.includes(`ชั้น ${floorNum}`) || desc.includes(`ชั้น${floorNum}`);
+                  });
+                  // กรองแล้วยังเหลือข้อมูลให้ใช้ตัวกรองนี้ (ถ้ากรองแล้วหายหมดให้ใช้ชุดเดิม)
+                  if (floorFiltered.length > 0) assets = floorFiltered;
+                }
+
+                const isBW = summaryLower.includes('ขาวดำ') || summaryLower.includes('ขาว-ดำ');
+                const isColor = summaryLower.includes('สี') && !isBW;
+
+                if (isBW) {
+                  const bwFiltered = assets.filter((a: any) => {
+                    const desc = (a.description || '').toLowerCase();
+                    return desc.includes('ขาวดำ') || desc.includes('ขาว-ดำ') || desc.includes('ดำ') || desc.includes('bw');
+                  });
+                  if (bwFiltered.length > 0) assets = bwFiltered;
+                } else if (isColor) {
+                  const colorFiltered = assets.filter((a: any) => {
+                    const desc = (a.description || '').toLowerCase();
+                    return desc.includes('สี') || desc.includes('color');
+                  });
+                  if (colorFiltered.length > 0) assets = colorFiltered;
+                }
+
+              } else if (isComputer) {
+                assets = assets.filter((a: any) =>
+                  a.type_name === 'Laptop' || a.type_name === 'Desktop'
+                );
+              }
+            }
+
+            if (assets.length > 0) {
+              assets = assets.slice(0, 5); // Limit to 5 for quick replies
+              conversationToUpdate.status = 'waiting_hardware_confirm';
+              conversationToUpdate.assetInfo = JSON.stringify(assets);
+              await conversationToUpdate.save();
+
+              const getAssetLabel = (a: any) => {
+                const brandModel = `${a.brand || ''} ${a.model || ''}`.trim();
+                const loc = a.location_name ? ` (${a.location_name})` : '';
+                return `${brandModel}${loc}`.substring(0, 15); // Leave room for emoji
+              };
+
+              const getAssetDesc = (a: any) => {
+                let desc = `${a.brand} ${a.model}\n   S/N: ${a.serial_no}`;
+                if (a.location_name) desc += `\n   📍 ตำแหน่ง: ${a.location_name}`;
+                if (a.description) desc += `\n   📝 รายละเอียด: ${a.description}`;
+                return desc;
+              };
+
+              if (assets.length === 1) {
+                const asset = assets[0];
+                const assetStr = `${asset.brand} ${asset.model} (S/N: ${asset.serial_no})`;
+                let msg = `ระบบตรวจพบว่าปัญหาอาจเกี่ยวข้องกับ ${assetStr}\nใช่เครื่องนี้หรือไม่ครับ?`;
+                if (asset.location_name) msg = `ระบบตรวจพบอุปกรณ์ที่ ${asset.location_name}: ${assetStr}\nเป็นเครื่องที่มีปัญหาใช่หรือไม่ครับ?`;
+
+                return messaging.replyTextWithQuickReply(
+                  replyToken,
+                  msg,
+                  [
+                    { label: '✅ ใช่', text: 'ใช่ เกี่ยวกับเครื่องนี้' },
+                    { label: '❌ ไม่ใช่', text: 'ไม่ใช่เครื่องนี้' }
+                  ]
+                );
+              } else {
+                // Multiple assets
+                const quickReplies = assets.map((a: any) => ({
+                  label: `✅ ${getAssetLabel(a)}`.substring(0, 20).trim(),
+                  text: `ใช่ เกี่ยวกับเครื่อง S/N: ${a.serial_no}`
+                }));
+                quickReplies.push({ label: '❌ ไม่ใช่สักเครื่อง', text: 'ไม่ใช่เครื่องนี้' });
+
+                const listStr = assets.map((a: any, i: number) => `${i + 1}. ${getAssetDesc(a)}`).join('\n\n');
+                const promptMsg = isPrinter
+                  ? `พบเครื่องพิมพ์/อุปกรณ์ส่วนกลางในระบบดังนี้ครับ ไม่ทราบว่าเป็นเครื่องไหนและอยู่ชั้นไหนครับ?\n\n${listStr}`
+                  : `พบอุปกรณ์ของคุณในระบบหลายรายการ ปัญหาเกี่ยวข้องกับรายการไหนครับ?\n\n${listStr}`;
+
+                return messaging.replyTextWithQuickReply(
+                  replyToken,
+                  promptMsg,
+                  quickReplies
+                );
+              }
             }
           }
         }
@@ -177,7 +299,31 @@ export async function escalateToSupport(
     }
   }
 
-  // ✅ ปิดการสนทนาและบันทึกข้อมูล
+  // 🤖 ขั้นตอนการแนะนำวิธีแก้ปัญหาเบื้องต้น (Self-Service)
+  // จะข้ามขั้นตอนนี้ถ้า:
+  // 1. ผู้ใช้พิมพ์ "ข้าม" มา
+  // 2. เคยผ่านขั้นตอนนี้มาแล้ว
+  // 3. ปัญหามีความชัดเจนมากพอ (เช่น ระบุชั้น/สถานที่ หรือ สรุปปัญหาได้ยาวพอ)
+  const isClearEnough = issueSummary.length > 25 || issueSummary.includes('ชั้น') || issueSummary.includes('ที่');
+
+  if (!isSkip && !isClearEnough && conversationToUpdate!.status !== 'waiting_troubleshoot_confirm') {
+    const advice = await geminiService.getTroubleshootingAdvice(issueSummary);
+
+    conversationToUpdate.status = 'waiting_troubleshoot_confirm';
+    conversationToUpdate.issue = issueSummary;
+    await conversationToUpdate.save();
+
+    return messaging.replyTextWithQuickReply(
+      replyToken,
+      `💡 ลองทำตามขั้นตอนเบื้องต้นด้านล่างนี้ดูนะครับ อาจช่วยให้ปัญหาคุณดีขึ้นทันที:\n\n${advice}\n\nลองทำตามดูแล้วเป็นอย่างไรบ้างครับ?`,
+      [
+        { label: '✅ พิมพ์แก้ได้แล้ว', text: 'แก้ได้แล้ว' },
+        { label: '❌ ยังแก้ไม่ได้', text: 'ยังแก้ไม่ได้' }
+      ]
+    );
+  }
+
+  // ✅ ปิดการสนทนาและบันทึกข้อมูล (เมื่อยืนยันว่ายังแก้ไม่ได้)
   conversationToUpdate.status = 'closed';
   conversationToUpdate.escalated = true;
   conversationToUpdate.issue = issueSummary;
@@ -188,33 +334,54 @@ export async function escalateToSupport(
     try {
       const assetData = JSON.parse(conversationToUpdate.assetInfo);
       if (assetData && !Array.isArray(assetData)) {
-        hardwareDetails = `\n💻 อุปกรณ์: ${assetData.brand} ${assetData.model} (S/N: ${assetData.serial_no})`;
+        const loc = assetData.location_name ? ` [${assetData.location_name}]` : '';
+        hardwareDetails = `\n💻 อุปกรณ์: ${assetData.brand} ${assetData.model}${loc} (S/N: ${assetData.serial_no})`;
       }
-    } catch(e) {}
+    } catch (e) { }
   }
 
   // ✅ แจ้ง Admin Group (เฉพาะปัญหา IT ที่มีการระบุชัดเจน)
   const adminGroupId = process.env.ADMIN_GROUP_ID;
 
+  // Gen Ticket ID (e.g. TIC-20230501-001)
+  const today = new Date();
+  const dateStr = today.getFullYear().toString() +
+    (today.getMonth() + 1).toString().padStart(2, '0') +
+    today.getDate().toString().padStart(2, '0');
+
+  // Count tickets created today to get the sequence
+  const startOfDay = new Date(today);
+  startOfDay.setHours(0, 0, 0, 0);
+  const endOfDay = new Date(today);
+  endOfDay.setHours(23, 59, 59, 999);
+
+  const countToday = await Ticket.countDocuments({
+    reportedAt: { $gte: startOfDay, $lte: endOfDay }
+  });
+
+  const ticketId = `TIC-${dateStr}-${(countToday + 1).toString().padStart(3, '0')}`;
+
   // บันทึกข้อมูลลง MongoDB ตามรูปแบบ
   const newTicket = new Ticket({
-    name: user.name,
-    employeeId: user.employeeId,
-    department: user.department,
-    email: user.email || 'ไม่ระบุ',
-    phone: user.phone || 'ไม่ระบุ',
+    ticketId: ticketId,
+    name: user!.name,
+    employeeId: user!.employeeId,
+    department: user!.department,
+    email: user!.email || 'ไม่ระบุ',
+    phone: user!.phone || 'ไม่ระบุ',
     issueSummary: issueSummary + hardwareDetails
   });
   await newTicket.save();
 
   if (adminGroupId) {
     const adminMessage =
-      `🚨 มีการแจ้งเคสใหม่จากพนักงาน\n\n` +
-      `👤 ชื่อ: ${user.name}\n` +
-      `🆔 รหัสพนักงาน: ${user.employeeId}\n` +
-      `📁 แผนก: ${user.department}\n` +
-      `📧 Email: ${user.email || 'ไม่ระบุ'}\n` +
-      `📞 เบอร์ติดต่อ: ${user.phone || 'ไม่ระบุ'}\n\n` +
+      `🚨 มีการแจ้งเคสใหม่จากพนักงาน\n` +
+      `🎫 เลขที่ Ticket: ${ticketId}\n\n` +
+      `👤 ชื่อ: ${user!.name}\n` +
+      `🆔 รหัสพนักงาน: ${user!.employeeId}\n` +
+      `📁 แผนก: ${user!.department}\n` +
+      `📧 Email: ${user!.email || 'ไม่ระบุ'}\n` +
+      `📞 เบอร์ติดต่อ: ${user!.phone || 'ไม่ระบุ'}\n\n` +
       `📝 สรุปปัญหา: ${issueSummary}${hardwareDetails}`;
 
     await messaging.pushText(adminGroupId, adminMessage);
@@ -223,7 +390,7 @@ export async function escalateToSupport(
   // ✅ ตอบกลับผู้ใช้พร้อมปุ่มเริ่มสนทนาใหม่
   return messaging.replyTextWithQuickReply(
     replyToken,
-    'รับทราบครับ! ✅ ระบบได้แจ้งเจ้าหน้าที่ IT Support ให้เรียบร้อยแล้ว\n\nเจ้าหน้าที่จะติดต่อกลับหาคุณโดยเร็วที่สุดครับ 🙏\n\n─────────────────\nหากต้องการแจ้งปัญหาเพิ่มเติม กดปุ่มเพื่อเริ่มการสนทนาใหม่ได้เลยครับ 👇',
+    `รับทราบครับ! ✅ ระบบได้แจ้งเจ้าหน้าที่ IT Support ให้เรียบร้อยแล้ว\n🎫 เลขที่ Ticket ของคุณคือ: ${ticketId}\n\nเจ้าหน้าที่จะติดต่อกลับหาคุณโดยเร็วที่สุดครับ 🙏\n\n─────────────────\nหากต้องการแจ้งปัญหาเพิ่มเติม กดปุ่มเพื่อเริ่มการสนทนาใหม่ได้เลยครับ 👇`,
     [{ label: '🚀 เริ่มสนทนาใหม่', text: '/start' }],
   );
 }

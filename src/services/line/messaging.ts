@@ -61,8 +61,54 @@ export class MessagingService {
         text: truncateText(chunk),
       }));
       await this.client.pushMessage(chatId, messages);
-    } catch (error) {
-      console.error('Error pushing message to chat:', error);
+    } catch (error: any) {
+      if (error.statusCode === 429 || (error.response && error.response.status === 429)) {
+        console.error(`⚠️ [LINE Push API] ขัดข้อง: โควต้าข้อความ Push รายเดือนเต็ม หรือถูกจำกัด Rate Limit (429) - ไม่สามารถส่งไปที่ ${chatId} ได้`);
+      } else {
+        console.error('Error pushing message to chat:', error.message || error);
+      }
+    }
+  }
+
+  async pushTextWithQuickReply(
+    chatId: string,
+    text: string,
+    quickReplyItems: QuickReplyItem[],
+  ): Promise<void> {
+    try {
+      const chunks = chunkText(text);
+      const lastIndex = chunks.length - 1;
+
+      const messages: TextMessage[] = chunks.map((chunk, index) => {
+        const isLast = index === lastIndex;
+        const msg: TextMessage = {
+          type: 'text',
+          text: truncateText(chunk),
+        };
+
+        if (isLast) {
+          msg.quickReply = {
+            items: quickReplyItems.map((item) => ({
+              type: 'action',
+              action: {
+                type: 'message',
+                label: item.label,
+                text: item.text,
+              },
+            })),
+          };
+        }
+
+        return msg;
+      });
+
+      await this.client.pushMessage(chatId, messages);
+    } catch (error: any) {
+      if (error.statusCode === 429 || (error.response && error.response.status === 429)) {
+        console.error(`⚠️ [LINE Push API] ขัดข้อง: โควต้าข้อความ Push รายเดือนเต็ม หรือถูกจำกัด Rate Limit (429) - ไม่สามารถส่งพร้อม QuickReply ไปที่ ${chatId} ได้`);
+      } else {
+        console.error('Error pushing message with quick reply:', error.message || error);
+      }
     }
   }
 

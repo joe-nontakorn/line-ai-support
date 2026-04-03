@@ -33,6 +33,9 @@ export class LineService {
       return;
     }
 
+    // ⏳ Show thinking UI for all incoming requests (Both AI and Bot)
+    await this.messaging.showLoadingAnimation(userId);
+
     const message = event.message;
 
     try {
@@ -63,7 +66,7 @@ export class LineService {
         return supportHandlers.handleRating(replyToken, userId, (message as TextEventMessage).text, waitingRatingConv, this.messaging, this.conversation);
       }
 
-      const waitingEscalationConv = await this.conversation.getLatestConversationByStatuses(userId, ['waiting_escalation_issue']);
+      const waitingEscalationConv = await this.conversation.getLatestConversationByStatuses(userId, ['waiting_escalation_issue', 'waiting_troubleshoot_confirm']);
       if (waitingEscalationConv) {
         if (message.type !== 'text') {
           return this.messaging.replyText(replyToken, 'กรุณาระบุปัญหาเป็นข้อความครับ');

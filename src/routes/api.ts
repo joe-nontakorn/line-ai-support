@@ -2,8 +2,11 @@ import express, { Request, Response } from 'express';
 import User from '../models/User.js';
 import Conversation from '../models/Conversation.js';
 import Ticket from '../models/Ticket.js';
+import { lineClient } from '../services/line/client.js';
+import { MessagingService } from '../services/line/messaging.js';
 
 const router = express.Router();
+const messagingService = new MessagingService(lineClient);
 
 /**
  * GET /api/stats - สถิติรวมของระบบ
@@ -290,7 +293,7 @@ router.get('/tickets', async (req: Request, res: Response) => {
 
     const filter: any = {};
     if (status !== undefined) {
-      filter.status = parseInt(status as string, 10);
+      filter.status = status as string;
     }
 
     const tickets = await Ticket.find(filter)
@@ -323,28 +326,14 @@ router.get('/tickets', async (req: Request, res: Response) => {
 });
 
 /**
- * PUT /api/tickets/:id/status - อัปเดตสถานะของ Ticket
- * Body: { status: 0 | 1 }
+ * GET /api/tickets/:id - ดึงข้อมูล Ticket เฉพาะ
  */
-router.put('/tickets/:id/status', async (req: Request, res: Response): Promise<any> => {
+router.get('/tickets/:id', async (req: Request, res: Response): Promise<any> => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
+    const ticket = await Ticket.findOne({ ticketId: id }).lean();
 
-    if (status !== 0 && status !== 1) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid status value. Must be 0 or 1.'
-      });
-    }
-
-    const updatedTicket = await Ticket.findByIdAndUpdate(
-      id,
-      { status },
-      { new: true }
-    );
-
-    if (!updatedTicket) {
+    if (!ticket) {
       return res.status(404).json({
         success: false,
         error: 'Ticket not found'
@@ -353,7 +342,133 @@ router.put('/tickets/:id/status', async (req: Request, res: Response): Promise<a
 
     res.json({
       success: true,
-      data: updatedTicket
+      data: ticket
+    });
+  } catch (error) {
+    console.error('Error fetching ticket:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch ticket'
+    });
+  }
+});
+
+/**
+ * PUT /api/tickets/:id/status - อัปเดตสถานะของ Ticket
+ * 
+ * Status Flow: pending → in_progress → resolved
+ *   - pending (รอรับเรื่อง) → in_progress (กำลังดำเนินการ)
+ *   - in_progress (กำลังดำเนินการ) → resolved (สำเร็จ)
+ * 
+ * Body: 
+ *   - status: 'pending' | 'in_progress' | 'resolved'
+ *   - changedBy?: string (ชื่อเจ้าหน้าที่)
+ *   - resolutionComment?: string (บังคับเมื่อ status = 'resolved' — วิธีแก้ปัญหาสำหรับ AI วิเคราะห์)
+ */
+router.put('/tickets/:id/status', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { id } = req.params;
+    const { status, changedBy, resolutionComment } = req.body;
+
+    // ✅ ตรวจสอบค่า status ที่ส่งมา
+    const validStatuses = ['pending', 'in_progress', 'resolved'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
+      });
+    }
+
+    // ✅ ดึง ticket ปัจจุบันเพื่อตรวจสอบ transition
+    const ticket = await Ticket.findOne({ ticketId: id });
+    if (!ticket) {
+      return res.status(404).json({
+        success: false,
+        error: 'Ticket not found'
+      });
+    }
+
+    // ✅ ตรวจสอบ status transition ว่าถูกต้อง
+    const allowedTransitions: Record<string, string[]> = {
+      'pending': ['in_progress'],
+      'in_progress': ['resolved'],
+      'resolved': [] // ไม่สามารถเปลี่ยนสถานะจาก resolved ได้
+    };
+
+    if (!allowedTransitions[ticket.status]?.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot change status from "${ticket.status}" to "${status}". Allowed: ${allowedTransitions[ticket.status]?.join(', ') || 'none'}`
+      });
+    }
+
+    // ✅ บังคับให้ใส่ resolutionComment เมื่อจะเปลี่ยนเป็น resolved
+    if (status === 'resolved') {
+      if (!resolutionComment || resolutionComment.trim() === '') {
+        return res.status(400).json({
+          success: false,
+          error: 'resolutionComment is required when resolving a ticket. กรุณาระบุวิธีแก้ปัญหาเพื่อใช้เป็นข้อมูลสำหรับ AI วิเคราะห์'
+        });
+      }
+      ticket.resolutionComment = resolutionComment.trim();
+      ticket.resolvedAt = new Date();
+    }
+
+    // ✅ อัปเดตสถานะ
+    ticket.status = status;
+
+    if (status === 'in_progress') {
+      ticket.acceptedAt = new Date();
+    }
+
+    // ✅ บันทึกประวัติการเปลี่ยนสถานะ
+    ticket.statusHistory.push({
+      status,
+      changedAt: new Date(),
+      changedBy: changedBy || '',
+      comment: status === 'resolved' ? resolutionComment?.trim() : ''
+    });
+
+    await ticket.save();
+
+    // ✅ ส่งข้อความแจ้งเตือนไปยังผู้แจ้ง (LINE) ตามสถานะที่เปลี่ยน
+    const user = await User.findOne({ employeeId: ticket.employeeId });
+    if (user && user.lineUserId) {
+      let message = '';
+      const staffName = changedBy ? ` (เจ้าหน้าที่: ${changedBy})` : '';
+
+      if (status === 'in_progress') {
+        message = 
+          `✅ IT ได้รับเรื่องแล้ว!${staffName}\n\n` +
+          `🎫 Ticket: ${ticket.ticketId}\n` +
+          `📝 ปัญหา: ${ticket.issueSummary}\n\n` +
+          `สถานะ: กำลังดำเนินการ 🔧\n` +
+          `เจ้าหน้าที่กำลังตรวจสอบและแก้ไขปัญหาให้คุณครับ\n\n` +
+          `─────────────────\n` +
+          `หากต้องการแจ้งปัญหาเพิ่มเติม กดปุ่มด้านล่างได้เลยครับ 👇`;
+      } else if (status === 'resolved') {
+        message = 
+          `🎉 เคสของคุณได้รับการแก้ไขเรียบร้อยแล้ว!${staffName}\n\n` +
+          `🎫 Ticket: ${ticket.ticketId}\n` +
+          `📝 ปัญหา: ${ticket.issueSummary}\n\n` +
+          `✅ วิธีแก้ไข: ${resolutionComment}\n\n` +
+          `สถานะ: สำเร็จ ✨\n\n` +
+          `─────────────────\n` +
+          `หากมีปัญหาอื่น กดปุ่มด้านล่างเพื่อเริ่มสนทนาใหม่ได้เลยครับ 👇`;
+      }
+
+      if (message) {
+        await messagingService.pushTextWithQuickReply(
+          user.lineUserId,
+          message,
+          [{ label: '🚀 เริ่มสนทนาใหม่', text: '/start' }]
+        );
+      }
+    }
+
+    res.json({
+      success: true,
+      data: ticket
     });
   } catch (error) {
     console.error('Error updating ticket status:', error);
