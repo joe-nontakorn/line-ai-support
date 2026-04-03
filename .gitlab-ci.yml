@@ -1,0 +1,16 @@
+stages:
+  - deploy
+
+deploy-to-production:
+  stage: deploy
+  only:
+    - master
+  tags:
+    - linebot
+  script:
+    - cd /var/www/jastel-app/line-ai-support
+    - git fetch origin master
+    - git reset --hard origin/master
+    - docker network inspect jastel-network >/dev/null 2>&1 || docker network create jastel-network
+    - docker compose up -d --build
+    - docker image prune -f
