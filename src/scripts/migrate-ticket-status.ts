@@ -1,0 +1,54 @@
+/**
+ * Migration Script: แปลง ticket status จาก number (0/1) เป็น string ('pending'/'resolved')
+ * 
+ * Usage: npx tsx src/scripts/migrate-ticket-status.ts
+ */
+import mongoose from 'mongoose';
+import dotenv from 'dotenv';
+dotenv.config();
+
+async function migrate() {
+  const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/line-ai-support';
+  await mongoose.connect(mongoUri);
+  console.log('Connected to MongoDB');
+
+  const db = mongoose.connection.db;
+  if (!db) { console.error('No db connection'); process.exit(1); }
+
+  const collection = db.collection('tickets');
+
+  // แปลง status: 1 (Pending) → 'pending'
+  const pendingResult = await collection.updateMany(
+    { status: 1 },
+    { 
+      $set: { status: 'pending', statusHistory: [], resolutionComment: '' },
+    }
+  );
+  console.log(`Migrated ${pendingResult.modifiedCount} tickets from status=1 to "pending"`);
+
+  // แปลง status: 0 (Resolved) → 'resolved'
+  const resolvedResult = await collection.updateMany(
+    { status: 0 },
+    { 
+      $set: { status: 'resolved', statusHistory: [], resolutionComment: 'ดำเนินการแก้ไขแล้ว (migrated)' },
+    }
+  );
+  console.log(`Migrated ${resolvedResult.modifiedCount} tickets from status=0 to "resolved"`);
+
+  // เพิ่ม field ใหม่ให้ ticket ที่ยังไม่มี
+  const addFieldsResult = await collection.updateMany(
+    { statusHistory: { $exists: false } },
+    { 
+      $set: { statusHistory: [], resolutionComment: '' }
+    }
+  );
+  console.log(`Added new fields to ${addFieldsResult.modifiedCount} tickets`);
+
+  console.log('Migration completed!');
+  await mongoose.disconnect();
+}
+
+migrate().catch(err => {
+  console.error('Migration failed:', err);
+  process.exit(1);
+});
