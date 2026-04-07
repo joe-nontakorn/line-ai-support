@@ -276,9 +276,12 @@ export async function handleTextMessage(
   }
 
   const quickReplies = [{ label: '👤 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' }];
-  if (responseType === 'IT_PROBLEM' || responseType === 'IT_INFO') {
+  if (responseType === 'IT_PROBLEM') {
     quickReplies.unshift({ label: '✅ แก้ได้แล้ว', text: 'แก้ได้แล้ว' });
     quickReplies.unshift({ label: '❌ ยังแก้ไม่ได้', text: 'ยังแก้ไม่ได้' });
+  } else if (responseType === 'IT_INFO') {
+    quickReplies.unshift({ label: '🚀 เริ่มสนทนาใหม่', text: '/start' });
+    quickReplies.unshift({ label: '📊 ให้คะแนนคำตอบ', text: 'แก้ได้แล้ว' }); // Trick 'แก้ได้แล้ว' to trigger rating
   } else if (responseType === 'OUT_OF_SCOPE') {
     quickReplies.unshift({ label: '🚀 เริ่มสนทนาใหม่', text: '/start' });
   }
