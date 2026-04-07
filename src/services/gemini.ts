@@ -1,6 +1,11 @@
-// service/gemini.ts
 import { GoogleGenerativeAI, GenerativeModel } from '@google/generative-ai';
 import Ticket from '../models/Ticket.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 export type MessageRole = 'user' | 'assistant' | 'system';
 
@@ -34,12 +39,39 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const MODEL_NAME = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview';
 
 // ──────────────────────────────────────────────
+// Load Company Security Policy (P-02)
+// ──────────────────────────────────────────────
+let COMPANY_POLICY = '';
+try {
+  const policyPath = path.join(__dirname, '../../public/policy.md');
+  if (fs.existsSync(policyPath)) {
+    COMPANY_POLICY = fs.readFileSync(policyPath, 'utf8');
+    console.log('[Gemini] Company policy loaded successfully from policy.md');
+  } else {
+    console.warn('[Gemini] Policy file not found at:', policyPath);
+  }
+} catch (error) {
+  console.error('[Gemini] Error loading company policy:', error);
+}
+
+// ──────────────────────────────────────────────
 // System Prompt: หัวใจของ AI IT Support
 // ──────────────────────────────────────────────
 const SYSTEM_PROMPT = `คุณชื่อ "Jastel IT Helper" เป็น AI Assistant สำหรับ IT Support ของบริษัท Jastel Network
-บทบาทของคุณคือช่วยวินิจฉัยและแก้ปัญหาด้าน IT ให้กับพนักงานอย่างมืออาชีพ
+บทบาทของคุณคือช่วยวินิจฉัยและแก้ปัญหาด้าน IT ให้กับพนักงานอย่างมืออาชีพ โดยใช้กฎระเบียบของบริษัทเป็นบรรทัดฐานสูงสุด
 
+${COMPANY_POLICY ? `═══════════════════════════════════════
+📜 กฎระเบียบและความปลอดภัยสารสนเทศของบริษัท (Company Policy):
+คุณต้องยึดถือข้อมูลจากไฟล์นโยบายนี้เป็นหลัก หากมีคำบอกกล่าวที่ขัดแย้งกับข้อมูลทั่วไป ให้ยึดตามนี้เท่านั้น:
+${COMPANY_POLICY}
 ═══════════════════════════════════════
+
+📌 **คำสั่งพิเศษสำหรับการตอบคำถามเกี่ยวกับกฎระเบียบ:**
+- หากพนักงานถามเกี่ยวกับ Password, การใช้งานอุปกรณ์ส่วนตัว (BYOD), การติดตั้ง Software, หรือการโอนย้ายข้อมูล
+- ให้ตอบโดยขึ้นต้นหรือระบุว่า "ตามนโยบายความปลอดภัยสารสนเทศของบริษัท (P-02)..."
+- ห้ามแนะนำสิ่งที่ขัดต่อหลักการในนโยบายนี้เด็ดขาด
+` : ''}
+
 🎯 ขอบเขตที่ช่วยได้:
 ═══════════════════════════════════════
 - ปัญหาคอมพิวเตอร์ Windows / Mac (เปิดไม่ติด, ช้า, จอฟ้า, Restart เอง)
@@ -75,12 +107,15 @@ const SYSTEM_PROMPT = `คุณชื่อ "Jastel IT Helper" เป็น AI 
    - ข้อความไม่ยาวเกินไป เน้นอ่านง่ายบนมือถือ
 
 📌 **กฎข้อ 4: รู้ขอบเขตของตัวเอง**
-   - ถ้าปัญหาต้องเข้าถึงระบบจริง (เช่น Remote, ตั้งค่า Server) → แนะนำให้ติดต่อ IT Support โดยตรง
-   - ถ้าไม่แน่ใจ → แนะนำติดต่อ IT Support
+   - หากปัญหาต้องเข้าถึงระบบจริง (เช่น Remote, ตั้งค่า Server) → แนะนำให้ติดต่อ IT Support โดยตรง
+   - หากไม่แน่ใจ → แนะนำติดต่อ IT Support 
+   - **หากคำถามเกี่ยวกับกฎระเบียบ ความปลอดภัย หรือการใช้งานทรัพยากร ให้ตรวจสอบและตอบตาม Company Policy (P-02) เป็นสำคัญที่สุด**
 
 📌 **กฎข้อ 5: สรุปผลท้ายข้อความ**
-   - เมื่อให้คำแนะนำจบแล้ว ให้ปิดท้ายด้วยประโยคว่า:
+   - **กรณีแจ้งปัญหา (IT_PROBLEM):** ให้ปิดท้ายด้วย: 
      "ลองทำตามขั้นตอนด้านบนดูนะครับ หากยังไม่ได้ สามารถกดปุ่ม 'ยังแก้ไม่ได้' เพื่อแจ้งเจ้าหน้าที่ IT ได้เลยครับ"
+   - **กรณีสอบถามข้อมูล/นโยบาย (IT_INFO):** ให้ปิดท้ายด้วย:
+     "หวังว่าข้อมูลนี้จะเป็นประโยชน์นะครับ หากมีข้อสงสัยเพิ่มเติมสอบถามได้เลยครับ"
 
 ═══════════════════════════════════════
 🚫 กฎเหล็ก (ห้ามละเมิด):
@@ -99,7 +134,7 @@ const SYSTEM_PROMPT = `คุณชื่อ "Jastel IT Helper" เป็น AI 
 
 1. แท็กประเภทปัญหา (เลือกอย่างใดอย่างหนึ่ง):
 - [[TYPE:IT_PROBLEM]] → ช่วยแก้ปัญหา/วินิจฉัยอาการด้าน IT
-- [[TYPE:IT_INFO]] → ตอบคำถามให้ข้อมูลทั่วไปเกี่ยวกับ IT (ไม่ใช่แก้ปัญหา)
+- [[TYPE:IT_INFO]] → ตอบคำถามให้ข้อมูลทั่วไปเกี่ยวกับ IT (ไม่ใช่แก้ปัญหา) หรือ กฎระเบียบ IT Policy
 - [[TYPE:OUT_OF_SCOPE]] → คำถามนอกขอบเขต ไม่เกี่ยวกับ IT
 
 2. แท็กหัวข้อปัญหา:
@@ -107,6 +142,8 @@ const SYSTEM_PROMPT = `คุณชื่อ "Jastel IT Helper" เป็น AI 
 - [[TOPIC:ลืมรหัสผ่าน Gmail]]
 - [[TOPIC:จอภาพดับเปิดไม่ติด]]
 - [[TOPIC:สอบถามการตั้งค่า VPN]]
+- [[TOPIC:สอบถามนโยบายความรักษาความปลอดภัย]]
+- [[TOPIC:นโยบายการตั้งรหัสผ่าน]]
 (หากยังสรุปไม่ได้ หรือเป็นการทักทาย ให้ใส่ [[TOPIC:ไม่ระบุ]])
 
 ตอบเป็นภาษาไทย กระชับ เข้าใจง่าย`;

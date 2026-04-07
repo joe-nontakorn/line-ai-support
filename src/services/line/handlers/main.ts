@@ -86,6 +86,76 @@ export async function handleTextMessage(
     }
   }
 
+  const deviceKeywords = ['my device', 'my devices', 'อุปกรณ์ของฉัน', 'เครื่องของฉัน', 'เช็คอุปกรณ์', 'อุปกรณ์ที่มี', 'device ของฉัน', 'คอมของฉัน'];
+  if (deviceKeywords.some(kw => normalizedLower.includes(kw))) {
+    const user = await conversationService.getUser(userId);
+    if (user) {
+      await messaging.showLoadingAnimation(userId, LOADING_SECONDS);
+      try {
+        const apiUrl = `http://172.16.1.16:3000/api/assets/search?employee_name=${encodeURIComponent(user.name)}`;
+        const res = await fetch(apiUrl);
+        if (res.ok) {
+          const result = await res.json() as any;
+          if (result.success && result.data && result.data.length > 0) {
+            let assets = result.data.filter((a: any) => {
+              const status = (a.status || '').toLowerCase();
+              return status !== 'retired' && status !== 'disposed';
+            });
+            
+            if (assets.length > 0) {
+              const msgParts = [`💻 อุปกรณ์ของคุณ ${user.name} ในระบบมีดังนี้:`];
+              assets.forEach((a: any, index: number) => {
+                const loc = a.location_name ? `\n   📍 สถานที่: ${a.location_name}` : '';
+                let warrantyInfo = '';
+                if (a.warranty_expiry) {
+                  const expiryDate = new Date(a.warranty_expiry);
+                  const now = new Date();
+                  if (expiryDate < now) {
+                    warrantyInfo = '\n   🛡️ ประกัน: หมดแล้ว';
+                  } else {
+                    const diffDays = Math.ceil((expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+                    if (diffDays >= 365) {
+                      const years = Math.floor(diffDays / 365);
+                      const months = Math.floor((diffDays % 365) / 30);
+                      warrantyInfo = `\n   🛡️ ประกัน: เหลือ ${years} ปี ${months > 0 ? months + ' เดือน' : ''}`.trimEnd();
+                    } else if (diffDays >= 30) {
+                      const months = Math.floor(diffDays / 30);
+                      const days = diffDays % 30;
+                      warrantyInfo = `\n   🛡️ ประกัน: เหลือ ${months} เดือน ${days > 0 ? days + ' วัน' : ''}`.trimEnd();
+                    } else {
+                      warrantyInfo = `\n   🛡️ ประกัน: เหลือ ${diffDays} วัน`;
+                    }
+                  }
+                }
+                msgParts.push(`${index + 1}. ${a.brand} ${a.model}\n   ประเภท: ${a.type_name}\n   S/N: ${a.serial_no}${loc}${warrantyInfo}`);
+              });
+              
+              return messaging.replyTextWithQuickReply(
+                replyToken,
+                msgParts.join('\n\n'),
+                [
+                  { label: '🚀 เริ่มสนทนาใหม่', text: '/start' },
+                  { label: '👤 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' }
+                ]
+              );
+            }
+          }
+          return messaging.replyTextWithQuickReply(
+            replyToken,
+            'ไม่พบอุปกรณ์ที่ลงทะเบียนภายใต้ชื่อของคุณในระบบครับ 📭',
+            [{ label: '🚀 เริ่มสนทนาใหม่', text: '/start' }]
+          );
+        }
+      } catch (err) {
+        console.error('Error fetching user devices:', err);
+        return messaging.replyText(
+          replyToken,
+          'ขออภัยครับ ไม่สามารถดึงข้อมูลอุปกรณ์ได้ในขณะนี้ กรุณาลองใหม่อีกครั้งภายหลังครับ 😥'
+        );
+      }
+    }
+  }
+
   if (text === '/start' || text === 'เริ่มสนทนาใหม่') {
     // ปิดการสนทนาทั้งหมดที่ยังค้างอยู่ก่อนเสมอ
     await conversationService.closeAllActiveConversations(userId);
@@ -206,9 +276,12 @@ export async function handleTextMessage(
   }
 
   const quickReplies = [{ label: '👤 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' }];
-  if (responseType === 'IT_PROBLEM' || responseType === 'IT_INFO') {
+  if (responseType === 'IT_PROBLEM') {
     quickReplies.unshift({ label: '✅ แก้ได้แล้ว', text: 'แก้ได้แล้ว' });
     quickReplies.unshift({ label: '❌ ยังแก้ไม่ได้', text: 'ยังแก้ไม่ได้' });
+  } else if (responseType === 'IT_INFO') {
+    quickReplies.unshift({ label: '🚀 เริ่มสนทนาใหม่', text: '/start' });
+    quickReplies.unshift({ label: '📊 ให้คะแนนคำตอบ', text: 'แก้ได้แล้ว' }); // Trick 'แก้ได้แล้ว' to trigger rating
   } else if (responseType === 'OUT_OF_SCOPE') {
     quickReplies.unshift({ label: '🚀 เริ่มสนทนาใหม่', text: '/start' });
   }

@@ -335,7 +335,31 @@ export async function escalateToSupport(
       const assetData = JSON.parse(conversationToUpdate.assetInfo);
       if (assetData && !Array.isArray(assetData)) {
         const loc = assetData.location_name ? ` [${assetData.location_name}]` : '';
-        hardwareDetails = `\n💻 อุปกรณ์: ${assetData.brand} ${assetData.model}${loc} (S/N: ${assetData.serial_no})`;
+        let warrantyInfo = '';
+        if (assetData.warranty_expiry) {
+          const expiryDate = new Date(assetData.warranty_expiry);
+          const now = new Date();
+          if (expiryDate < now) {
+            warrantyInfo = '\n   🛡️ สถานะประกัน: หมดประกันแล้ว';
+          } else {
+            const diffTime = expiryDate.getTime() - now.getTime();
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            let timeStr = '';
+            if (diffDays >= 365) {
+              const years = Math.floor(diffDays / 365);
+              const months = Math.floor((diffDays % 365) / 30);
+              timeStr = `${years} ปี ${months > 0 ? months + ' เดือน' : ''}`.trim();
+            } else if (diffDays >= 30) {
+              const months = Math.floor(diffDays / 30);
+              const days = diffDays % 30;
+              timeStr = `${months} เดือน ${days > 0 ? days + ' วัน' : ''}`.trim();
+            } else {
+              timeStr = `${diffDays} วัน`;
+            }
+            warrantyInfo = `\n   🛡️ สถานะประกัน: เหลืออีก ${timeStr}`;
+          }
+        }
+        hardwareDetails = `\n💻 อุปกรณ์: ${assetData.brand} ${assetData.model}${loc} (S/N: ${assetData.serial_no})${warrantyInfo}`;
       }
     } catch (e) { }
   }
