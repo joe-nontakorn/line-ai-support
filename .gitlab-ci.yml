@@ -6,7 +6,7 @@ deploy-to-production:
   only:
     - master
   tags:
-    - runner-asset-b
+    - linebot
   script:
     - cd /var/www/jastel-app/line-ai-support 
     - git fetch origin master
