@@ -8,9 +8,11 @@ run-tests:
     - master
   tags:
     - linebot
+  variables:
+    GEMINI_API_KEY: "dummy-key-for-test"
   script:
     - bun install
-    - bun test
+    - bun test tests/
     
 deploy-to-production:
   stage: deploy
