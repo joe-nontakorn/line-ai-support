@@ -5,11 +5,15 @@ stages:
 run-tests:
   stage: test
   image: oven/bun:latest
+  variables:
+    GEMINI_API_KEY: "dummy_key_for_ci_testing"
+    NODE_ENV: "test"
   script:
     - bun install
     - bun test
   only:
     - master
+    - dev
 
 deploy-to-production:
   stage: deploy
