@@ -1,6 +1,17 @@
 stages:
+  - test
   - deploy
 
+run-tests:
+  stage: test
+  only:
+    - master
+  tags:
+    - linebot
+  script:
+    - bun install
+    - bun test
+    
 deploy-to-production:
   stage: deploy
   only:
