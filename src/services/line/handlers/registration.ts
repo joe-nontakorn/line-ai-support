@@ -146,7 +146,7 @@ export async function handleRegistration(
     state.tempPayload.phone = phone;
 
     // 📡 Update backend API
-    await registration.updateEmployeePhone(state.tempPayload.employeeId, phone);
+    await registration.updateEmployeePhone(state.tempPayload.employeeId, phone, state.tempPayload.email || '');
 
     // 💾 Save to DB
     await conversation.saveOrUpdateUser(userId, state.tempPayload);

@@ -126,14 +126,14 @@ export class RegistrationService {
     return !!(existingUser && existingUser.lineUserId !== currentUserId);
   }
 
-  async updateEmployeePhone(employeeId: string, phone: string): Promise<boolean> {
+  async updateEmployeePhone(employeeId: string, phone: string, email: string): Promise<boolean> {
     try {
       const response = await fetchWithTimeout(`http://172.16.1.16:3000/api/employees/update/${encodeURIComponent(employeeId)}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ phone })
+        body: JSON.stringify({ phone, email })
       }, 10000);
 
       return response.ok;
