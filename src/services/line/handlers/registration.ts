@@ -145,10 +145,19 @@ export async function handleRegistration(
     // Update payload
     state.tempPayload.phone = phone;
 
-    // 📡 Update backend API
-    await registration.updateEmployeePhone(state.tempPayload.employeeId, phone);
+    // 📡 Update backend API (Partial Update)
+    const updateResult = await registration.updateEmployeePhone(
+      state.tempPayload.employeeId, 
+      phone, 
+      state.tempPayload.email
+    );
+    if (updateResult) {
+       console.log(`✅ Successfully updated phone for employee ${state.tempPayload.employeeId} in external database`);
+    } else {
+       console.error(`❌ Failed to update phone for employee ${state.tempPayload.employeeId} in external database (Check API logs)`);
+    }
 
-    // 💾 Save to DB
+    // 💾 Save to local DB (Always save local even if external fails so user can still chat)
     await conversation.saveOrUpdateUser(userId, state.tempPayload);
     registration.clearState(userId);
 
