@@ -1,5 +1,15 @@
 stages:
+  - test
   - deploy
+
+run-tests:
+  stage: test
+  image: oven/bun:latest
+  script:
+    - bun install
+    - bun test
+  only:
+    - master
 
 deploy-to-production:
   stage: deploy
