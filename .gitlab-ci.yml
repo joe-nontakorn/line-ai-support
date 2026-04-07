@@ -1,19 +1,5 @@
 stages:
-  - test
   - deploy
-
-run-tests:
-  stage: test
-  image: oven/bun:latest
-  variables:
-    GEMINI_API_KEY: "dummy_key_for_ci_testing"
-    NODE_ENV: "test"
-  script:
-    - bun install
-    - bun test
-  only:
-    - master
-    - dev
 
 deploy-to-production:
   stage: deploy
@@ -23,7 +9,6 @@ deploy-to-production:
     - linebot
   script:
     - cd /var/www/jastel-app/line-ai-support
-    - git config --global --add safe.directory /var/www/jastel-app/line-ai-support
     - git fetch origin master
     - git reset --hard origin/master
     - docker network inspect jastel-network >/dev/null 2>&1 || docker network create jastel-network

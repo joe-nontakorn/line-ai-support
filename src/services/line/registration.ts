@@ -1,3 +1,4 @@
+// src/services/line/registration.ts
 import nodemailer from 'nodemailer';
 import dns from 'node:dns';
 import User from '../../models/User.js';
@@ -53,13 +54,13 @@ export class RegistrationService {
           rejectUnauthorized: false
         },
         // Force IPv4 if IPv6 is failing in this environment
-        family: 4, 
+        family: 4,
         lookup: (hostname: string, options: any, callback: any) => {
           dns.lookup(hostname, { family: 4 }, (err, address, family) => {
             callback(err, address, family);
           });
         },
-        connectionTimeout: 10000, 
+        connectionTimeout: 10000,
         greetingTimeout: 10000,
         socketTimeout: 10000,
       };
@@ -107,17 +108,17 @@ export class RegistrationService {
   async checkDuplicateUser(match: any, currentUserId: string): Promise<boolean> {
     // โหมด Dev อนุญาตให้สลับ LINE ID ได้อิสระ (ลบข้อมูลการผูกบัญชีเก่าออกให้เลย)
     if (process.env.NODE_ENV !== 'production') {
-       await User.deleteMany({
-         $or: [
-           { employeeId: match.emp_id },
-           { email: match.email && match.email.trim() !== '' ? match.email : 'INVALID_EMAIL_IGNORE' }
-         ],
-         lineUserId: { $ne: currentUserId }
-       });
-       return false;
+      await User.deleteMany({
+        $or: [
+          { employeeId: match.emp_id },
+          { email: match.email && match.email.trim() !== '' ? match.email : 'INVALID_EMAIL_IGNORE' }
+        ],
+        lineUserId: { $ne: currentUserId }
+      });
+      return false;
     }
 
-    const existingUser = await User.findOne({ 
+    const existingUser = await User.findOne({
       $or: [
         { employeeId: match.emp_id },
         { email: match.email }
@@ -126,19 +127,28 @@ export class RegistrationService {
     return !!(existingUser && existingUser.lineUserId !== currentUserId);
   }
 
-  async updateEmployeePhone(employeeId: string, phone: string, email: string): Promise<boolean> {
+  async updateEmployeePhone(employeeId: string, phone: string, email?: string): Promise<boolean> {
     try {
+      // 📡 ใช้ Partial Update ตามที่ Backend รองรับใหม่ โดยส่งแค่ฟิลด์ที่จำเป็น (emp_id, email, phone)
+      const payload: any = { emp_id: employeeId, phone };
+      if (email) payload.email = email;
+
       const response = await fetchWithTimeout(`http://172.16.1.16:3000/api/employees/update/${encodeURIComponent(employeeId)}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ phone, email })
+        body: JSON.stringify(payload)
       }, 10000);
+
+      if (!response.ok) {
+         const errorText = await response.text();
+         console.error(`❌ Partial update failed for ${employeeId}:`, response.status, errorText);
+      }
 
       return response.ok;
     } catch (error) {
-      console.error('Error updating employee phone:', error);
+      console.error('Error in partial updateEmployeePhone:', error);
       return false;
     }
   }
