@@ -242,7 +242,7 @@ export async function escalateToSupport(
             }
 
             if (assets.length > 0) {
-              assets = assets.slice(0, 5); // Limit to 5 for quick replies
+              assets = assets.slice(0, 12); // Limit to 12 for Quick Replies (max 13 buttons limit)
               conversationToUpdate.status = 'waiting_hardware_confirm';
               conversationToUpdate.assetInfo = JSON.stringify(assets);
               await conversationToUpdate.save();
