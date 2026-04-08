@@ -426,23 +426,28 @@ export class GeminiService {
     });
   }
 
-  async analyzeImage(base64Image: string): Promise<GeminiAnalysisResult> {
+  async analyzeImage(base64Image: string, userText?: string): Promise<GeminiAnalysisResult> {
     await this.analysisSemaphore.acquire();
     try {
-      return await this._analyzeImageInternal(base64Image);
+      return await this._analyzeImageInternal(base64Image, userText);
     } finally {
       this.analysisSemaphore.release();
     }
   }
 
-  private async _analyzeImageInternal(base64Image: string): Promise<GeminiAnalysisResult> {
+  private async _analyzeImageInternal(base64Image: string, userText?: string): Promise<GeminiAnalysisResult> {
     return this.retryWithBackoff(async () => {
       try {
-        const prompt = `${getSystemPrompt()}
+        let prompt = `${getSystemPrompt()}
 
 คุณได้รับรูปภาพจาก user ที่เกี่ยวข้องกับปัญหา IT
+`;
+        if (userText) {
+          prompt += `\nUser ส่งข้อความเพิ่มเติมมาพร้อมกับรูปภาพว่า: "${userText}"\n`;
+        }
 
-กรุณาวิเคราะห์รูปภาพและตอบเป็นภาษาไทย โดยจัดรูปแบบดังนี้:
+        prompt += `
+กรุณาวิเคราะห์รูปภาพประกอบกับข้อความ (ถ้ามี) และตอบเป็นภาษาไทย โดยจัดรูปแบบดังนี้:
 1. สรุปว่าเห็นอะไรในภาพ
 2. ระบุปัญหาที่เป็นไปได้
 3. แนะนำวิธีแก้แบบเป็นขั้นตอน

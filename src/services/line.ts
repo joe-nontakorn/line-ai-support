@@ -9,6 +9,8 @@ import * as mediaHandlers from './line/handlers/media.js';
 import User from '../models/User.js';
 import { logger } from '../utils/logger.js';
 
+export const imageWaitStates = new Map<string, (text: string | null) => void>();
+
 export class LineService {
   private messaging: MessagingService;
   private conversation: ConversationService;
@@ -77,11 +79,33 @@ export class LineService {
 
       // 🚨 Main Message Type Routing
       switch (message.type) {
-        case 'text':
-          return mainHandlers.handleTextMessage(replyToken, userId, (message as TextEventMessage).text, this.messaging, this.conversation);
+        case 'text': {
+          const textMessage = (message as TextEventMessage).text;
+          
+          if (imageWaitStates.has(userId)) {
+            const resolver = imageWaitStates.get(userId)!;
+            imageWaitStates.delete(userId); // remove to prevent multiple texts from firing
+            resolver(textMessage);
+            return; // Halt independent text processing since it's now bound to the image
+          }
 
-        case 'image':
-          return mediaHandlers.handleImageMessage(replyToken, userId, message as ImageEventMessage, this.client, this.messaging, this.conversation);
+          return mainHandlers.handleTextMessage(replyToken, userId, textMessage, this.messaging, this.conversation);
+        }
+
+        case 'image': {
+          // Wait 5 seconds to see if there is an accompanying text message
+          const userText = await new Promise<string|null>(resolve => {
+            imageWaitStates.set(userId, resolve);
+            setTimeout(() => {
+              if (imageWaitStates.has(userId)) {
+                imageWaitStates.delete(userId);
+                resolve(null);
+              }
+            }, 4000); // Wait 4 seconds for a text
+          });
+          
+          return mediaHandlers.handleImageMessage(replyToken, userId, message as ImageEventMessage, this.client, this.messaging, this.conversation, userText || undefined);
+        }
 
         case 'file':
           return mediaHandlers.handleFileMessage(replyToken, userId, message as FileEventMessage, this.client, this.messaging, this.conversation);
@@ -90,7 +114,7 @@ export class LineService {
           return this.messaging.replyTextWithQuickReply(
             replyToken,
             'สวัสดีครับ หากต้องการให้ดูแลเรื่อง IT Support รบกวนกดปุ่มเพื่อเริ่มสนทนาใหม่ได้เลยครับ 😊 👇',
-            [{ label: '🚀 เริ่มสนทนาใหม่', text: '/start' }],
+            [{ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' }],
           );
 
         default:

@@ -12,7 +12,8 @@ export async function handleImageMessage(
   message: ImageEventMessage,
   client: Client,
   messaging: MessagingService,
-  conversationService: ConversationService
+  conversationService: ConversationService,
+  userText?: string
 ): Promise<MessageAPIResponseBase | undefined> {
   try {
     const imageStream = (await client.getMessageContent(message.id)) as AsyncIterable<Buffer>;
@@ -21,14 +22,19 @@ export async function handleImageMessage(
 
     await messaging.showLoadingAnimation(userId, LOADING_SECONDS);
 
-    const analysisResult = await geminiService.analyzeImage(base64Image);
+    const analysisResult = await geminiService.analyzeImage(base64Image, userText);
 
     let conversation = await conversationService.getActiveConversation(userId);
     if (!conversation) {
       conversation = await conversationService.createNewConversation(userId, 'active');
     }
 
-    await conversationService.appendUserMessage(conversation, `[ส่งรูปภาพ] ${analysisResult.description || 'รูปภาพที่เกี่ยวข้องกับปัญหา'}`);
+    let summaryLog = `[ส่งรูปภาพ] ${analysisResult.description || 'รูปภาพที่เกี่ยวข้องกับปัญหา'}`;
+    if (userText) {
+      summaryLog += `\nข้อความประกอบ: ${userText}`;
+    }
+    
+    await conversationService.appendUserMessage(conversation, summaryLog);
     await conversationService.appendAssistantMessage(conversation, analysisResult.response);
 
     return messaging.replyText(replyToken, analysisResult.response);
