@@ -5,8 +5,11 @@ import User from '../../models/User.js';
 import { RegistrationState } from './types.js';
 import { REGISTRATION_TTL_MS } from './constants.js';
 import { fetchWithTimeout, normalizePhone } from './utils.js';
+import { logger } from '../../utils/logger.js';
 
 const registrationStates = new Map<string, RegistrationState>();
+
+const apiAsset = process.env.API_ASSET;
 
 export class RegistrationService {
   isStateExpired(state: RegistrationState): boolean {
@@ -84,13 +87,13 @@ export class RegistrationService {
       await transporter.sendMail(mailOptions);
       return true;
     } catch (error) {
-      console.error('Error sending OTP email:', error);
+      logger.error('Error sending OTP email:', error);
       return false;
     }
   }
 
   async validateEmployee(searchQuery: string): Promise<any | null> {
-    const response = await fetchWithTimeout('http://172.16.1.16:3000/api/employees/list', { method: 'GET' }, 15000);
+    const response = await fetchWithTimeout(`${apiAsset}/employees/list`, { method: 'GET' }, 15000);
     if (!response.ok) {
       throw new Error(`API returned ${response.status}`);
     }
@@ -133,7 +136,7 @@ export class RegistrationService {
       const payload: any = { emp_id: employeeId, phone };
       if (email) payload.email = email;
 
-      const response = await fetchWithTimeout(`http://172.16.1.16:3000/api/employees/update/${encodeURIComponent(employeeId)}`, {
+      const response = await fetchWithTimeout(`${apiAsset}/employees/update/${encodeURIComponent(employeeId)}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json'
@@ -142,13 +145,13 @@ export class RegistrationService {
       }, 10000);
 
       if (!response.ok) {
-         const errorText = await response.text();
-         console.error(`❌ Partial update failed for ${employeeId}:`, response.status, errorText);
+        const errorText = await response.text();
+        logger.error(`❌ Partial update failed for ${employeeId}:`, { status: response.status, error: errorText });
       }
 
       return response.ok;
     } catch (error) {
-      console.error('Error in partial updateEmployeePhone:', error);
+      logger.error('Error in partial updateEmployeePhone:', error);
       return false;
     }
   }

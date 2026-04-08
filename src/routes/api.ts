@@ -4,6 +4,7 @@ import Conversation from '../models/Conversation.js';
 import Ticket from '../models/Ticket.js';
 import { lineClient } from '../services/line/client.js';
 import { MessagingService } from '../services/line/messaging.js';
+import { logger } from '../utils/logger.js';
 
 const router = express.Router();
 const messagingService = new MessagingService(lineClient);
@@ -51,7 +52,7 @@ router.get('/stats', async (req: Request, res: Response) => {
       }
     });
   } catch (error) {
-    console.error('Error fetching stats:', error);
+    logger.error('Error fetching stats:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch statistics'
@@ -118,7 +119,7 @@ router.get('/conversations', async (req: Request, res: Response) => {
       }
     });
   } catch (error) {
-    console.error('Error fetching conversations:', error);
+    logger.error('Error fetching conversations:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch conversations'
@@ -156,7 +157,7 @@ router.get('/conversations/:sessionId', async (req: Request, res: Response): Pro
       }
     });
   } catch (error) {
-    console.error('Error fetching conversation:', error);
+    logger.error('Error fetching conversation:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch conversation'
@@ -192,7 +193,7 @@ router.get('/users', async (req: Request, res: Response) => {
       }
     });
   } catch (error) {
-    console.error('Error fetching users:', error);
+    logger.error('Error fetching users:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch users'
@@ -240,7 +241,7 @@ router.get('/issues', async (req: Request, res: Response) => {
       }))
     });
   } catch (error) {
-    console.error('Error fetching issues:', error);
+    logger.error('Error fetching issues:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch issues'
@@ -276,7 +277,7 @@ router.get('/ratings', async (req: Request, res: Response) => {
       data: distribution
     });
   } catch (error) {
-    console.error('Error fetching ratings:', error);
+    logger.error('Error fetching ratings:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch ratings'
@@ -317,7 +318,7 @@ router.get('/tickets', async (req: Request, res: Response) => {
       }
     });
   } catch (error) {
-    console.error('Error fetching tickets:', error);
+    logger.error('Error fetching tickets:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch tickets'
@@ -345,7 +346,7 @@ router.get('/tickets/:id', async (req: Request, res: Response): Promise<any> => 
       data: ticket
     });
   } catch (error) {
-    console.error('Error fetching ticket:', error);
+    logger.error('Error fetching ticket:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch ticket'
@@ -471,7 +472,7 @@ router.put('/tickets/:id/status', async (req: Request, res: Response): Promise<a
       data: ticket
     });
   } catch (error) {
-    console.error('Error updating ticket status:', error);
+    logger.error('Error updating ticket status:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to update ticket status'

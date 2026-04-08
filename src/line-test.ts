@@ -1,6 +1,7 @@
 import axios from 'axios';
 import * as dotenv from 'dotenv';
 import path from 'path';
+import { logger } from './utils/logger.js';
 
 dotenv.config({ path: '/var/www/jastel-app/line-ai-support/.env' });
 
@@ -27,12 +28,12 @@ async function testPush() {
         }
       }
     );
-    console.log('Success:', res.data);
+    logger.info('Success:', res.data);
   } catch (error: any) {
     if (error.response) {
-      console.error('Error Response Data:', JSON.stringify(error.response.data, null, 2));
+      logger.error('Error Response Data:', JSON.stringify(error.response.data, null, 2));
     } else {
-      console.error('Error:', error.message);
+      logger.error('Error:', error.message);
     }
   }
 }

@@ -1,10 +1,11 @@
 import mongoose from 'mongoose';
+import { logger } from '../utils/logger.js';
 
 let isConnected = false;
 
 export const connectDB = async (): Promise<void> => {
   if (isConnected) {
-    console.log('Already connected to MongoDB');
+    logger.info('Already connected to MongoDB');
     return;
   }
 
@@ -15,9 +16,9 @@ export const connectDB = async (): Promise<void> => {
     });
 
     isConnected = db.connections[0].readyState === 1;
-    console.log('Connected to MongoDB Success');
+    logger.info('Connected to MongoDB Success');
   } catch (error) {
-    console.error('MongoDB connection error:', error);
+    logger.error('MongoDB connection error:', error);
     throw error;
   }
 };

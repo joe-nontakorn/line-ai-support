@@ -2,6 +2,7 @@ import { Client, TextMessage, MessageAPIResponseBase } from '@line/bot-sdk';
 import { QuickReplyItem } from './types.js';
 import { chunkText, truncateText, fetchWithTimeout } from './utils.js';
 import { LOADING_SECONDS } from './constants.js';
+import { logger } from '../../utils/logger.js';
 
 export class MessagingService {
   constructor(private client: Client) {}
@@ -63,9 +64,9 @@ export class MessagingService {
       await this.client.pushMessage(chatId, messages);
     } catch (error: any) {
       if (error.statusCode === 429 || (error.response && error.response.status === 429)) {
-        console.error(`⚠️ [LINE Push API] ขัดข้อง: โควต้าข้อความ Push รายเดือนเต็ม หรือถูกจำกัด Rate Limit (429) - ไม่สามารถส่งไปที่ ${chatId} ได้`);
+        logger.error(`⚠️ [LINE Push API] ขัดข้อง: โควต้าข้อความ Push รายเดือนเต็ม หรือถูกจำกัด Rate Limit (429) - ไม่สามารถส่งไปที่ ${chatId} ได้`);
       } else {
-        console.error('Error pushing message to chat:', error.message || error);
+        logger.error('Error pushing message to chat:', error.message || error);
       }
     }
   }
@@ -105,9 +106,9 @@ export class MessagingService {
       await this.client.pushMessage(chatId, messages);
     } catch (error: any) {
       if (error.statusCode === 429 || (error.response && error.response.status === 429)) {
-        console.error(`⚠️ [LINE Push API] ขัดข้อง: โควต้าข้อความ Push รายเดือนเต็ม หรือถูกจำกัด Rate Limit (429) - ไม่สามารถส่งพร้อม QuickReply ไปที่ ${chatId} ได้`);
+        logger.error(`⚠️ [LINE Push API] ขัดข้อง: โควต้าข้อความ Push รายเดือนเต็ม หรือถูกจำกัด Rate Limit (429) - ไม่สามารถส่งพร้อม QuickReply ไปที่ ${chatId} ได้`);
       } else {
-        console.error('Error pushing message with quick reply:', error.message || error);
+        logger.error('Error pushing message with quick reply:', error.message || error);
       }
     }
   }
@@ -135,10 +136,10 @@ export class MessagingService {
 
       if (!response.ok) {
         const body = await response.text().catch(() => '');
-        console.error('Loading animation failed:', response.status, body);
+        logger.error('Loading animation failed:', response.status, body);
       }
     } catch (error) {
-      console.error('Error showing loading animation:', error);
+      logger.error('Error showing loading animation:', error);
     }
   }
 }

@@ -4,6 +4,7 @@ import { ConversationService } from '../conversation.js';
 import { streamToBuffer } from '../utils.js';
 import geminiService from '../../gemini.js';
 import { LOADING_SECONDS } from '../constants.js';
+import { logger } from '../../../utils/logger.js';
 
 export async function handleImageMessage(
   replyToken: string,
@@ -32,7 +33,7 @@ export async function handleImageMessage(
 
     return messaging.replyText(replyToken, analysisResult.response);
   } catch (error) {
-    console.error('Error handling image:', error);
+    logger.error('Error handling image:', error);
     return messaging.replyText(replyToken, 'ไม่สามารถประมวลผลรูปภาพได้ กรุณาลองใหม่อีกครั้ง');
   }
 }
@@ -70,7 +71,7 @@ export async function handleFileMessage(
 
     return messaging.replyText(replyToken, analysisResult.response);
   } catch (error) {
-    console.error('Error handling file:', error);
+    logger.error('Error handling file:', error);
     return messaging.replyText(replyToken, 'ไม่สามารถประมวลผลไฟล์ได้ กรุณาลองใหม่อีกครั้ง');
   }
 }
