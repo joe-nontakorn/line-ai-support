@@ -9,6 +9,8 @@ import geminiService from '../../gemini.js';
 import { LOADING_SECONDS } from '../constants.js';
 import Ticket from '../../../models/Ticket.js';
 
+const apiAsset = process.env.API_ASSET || 'http://172.16.1.16:3000/api';
+
 export async function handleFollow(
   event: FollowEvent,
   messaging: MessagingService,
@@ -41,7 +43,7 @@ export async function handleFollow(
       `ยินดีต้อนรับกลับมาครับคุณ ${user.name}! มีปัญหาเรื่อง IT สอบถามเข้ามาได้เลยครับ 😊\n\n📌 สามารถแนบส่ง **รูปภาพแคปหน้าจอ** หรือ **ไฟล์ PDF/เอกสารต่าง ๆ** แจ้งปัญหาได้เลยครับ\n\nกรุณากดปุ่มเพื่อเริ่มสนทนาใหม่ 👇`,
       [
         { label: '👤 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' },
-        { label: '🚀 เริ่มสนทนาใหม่', text: '/start' },
+        { label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' },
       ],
     );
   } catch (error) {
@@ -59,8 +61,8 @@ export async function handleTextMessage(
 ): Promise<MessageAPIResponseBase | undefined> {
   const normalizedLower = text.toLowerCase().trim();
 
-  // ตรวจสอบว่าผู้ใช้พิมพ์ถามสถานะ Ticket หรือไม่
-  const ticketMatch = text.match(/TIC-\d{8}-\d{3}/i);
+  // ตรวจสอบว่าผู้ใช้พิมพ์ถามสถานะ Ticket หรือไม่ (เช่น IT-A1B2C3 หรือ TIC-2026...)
+  const ticketMatch = text.match(/(?:IT-[A-Z0-9]+|TIC-\d{8}-\d{3})/i);
   if (ticketMatch) {
     const ticketId = ticketMatch[0].toUpperCase();
     const ticket = await Ticket.findOne({ ticketId });
@@ -70,7 +72,7 @@ export async function handleTextMessage(
       else if (ticket.status === 'resolved') statusText = 'แก้ไขสำเร็จแล้ว ✨';
 
       let replyMsg = `📊 สถานะ Ticket: ${ticketId}\n\n📝 รายละเอียด: ${ticket.issueSummary}\n📌 สถานะปัจจุบัน: ${statusText}`;
-      
+
       if (ticket.status === 'resolved' && ticket.resolutionComment) {
         replyMsg += `\n✅ วิธีแก้ไข: ${ticket.resolutionComment}`;
       }
@@ -79,7 +81,7 @@ export async function handleTextMessage(
         replyToken,
         replyMsg,
         [
-          { label: '🚀 เริ่มสนทนาใหม่', text: '/start' },
+          { label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' },
           { label: '👤 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' }
         ]
       );
@@ -92,7 +94,7 @@ export async function handleTextMessage(
     if (user) {
       await messaging.showLoadingAnimation(userId, LOADING_SECONDS);
       try {
-        const apiUrl = `http://172.16.1.16:3000/api/assets/search?employee_name=${encodeURIComponent(user.name)}`;
+        const apiUrl = `${apiAsset}/assets/search?employee_name=${encodeURIComponent(user.name)}`;
         const res = await fetch(apiUrl);
         if (res.ok) {
           const result = await res.json() as any;
@@ -101,7 +103,7 @@ export async function handleTextMessage(
               const status = (a.status || '').toLowerCase();
               return status !== 'retired' && status !== 'disposed';
             });
-            
+
             if (assets.length > 0) {
               const msgParts = [`💻 อุปกรณ์ของคุณ ${user.name} ในระบบมีดังนี้:`];
               assets.forEach((a: any, index: number) => {
@@ -129,12 +131,12 @@ export async function handleTextMessage(
                 }
                 msgParts.push(`${index + 1}. ${a.brand} ${a.model}\n   ประเภท: ${a.type_name}\n   S/N: ${a.serial_no}${loc}${warrantyInfo}`);
               });
-              
+
               return messaging.replyTextWithQuickReply(
                 replyToken,
                 msgParts.join('\n\n'),
                 [
-                  { label: '🚀 เริ่มสนทนาใหม่', text: '/start' },
+                  { label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' },
                   { label: '👤 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' }
                 ]
               );
@@ -143,7 +145,7 @@ export async function handleTextMessage(
           return messaging.replyTextWithQuickReply(
             replyToken,
             'ไม่พบอุปกรณ์ที่ลงทะเบียนภายใต้ชื่อของคุณในระบบครับ 📭',
-            [{ label: '🚀 เริ่มสนทนาใหม่', text: '/start' }]
+            [{ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' }]
           );
         }
       } catch (err) {
@@ -172,7 +174,7 @@ export async function handleTextMessage(
       replyToken,
       'สวัสดีครับ หากต้องการให้ดูแลเรื่อง IT Support รบกวนกดปุ่มเพื่อเริ่มสนทนาใหม่ได้เลยครับ 😊 👇',
       [
-        { label: '🚀 เริ่มสนทนาใหม่', text: '/start' },
+        { label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' },
         { label: '👤 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' },
       ],
     );
@@ -188,7 +190,7 @@ export async function handleTextMessage(
       '• หากต้องการเริ่มคุยใหม่ ให้กด "เริ่มสนทนาใหม่"\n\n' +
       'ยินดีให้บริการครับ 😊',
       [
-        { label: '🚀 เริ่มสนทนาใหม่', text: '/start' },
+        { label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' },
         { label: '👤 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' },
       ],
     );
@@ -239,7 +241,7 @@ export async function handleTextMessage(
               }
               await hwConv.save();
             }
-          } catch(e) {}
+          } catch (e) { }
         }
       }
       return escalateToSupport(replyToken, userId, undefined, hwConv, messaging, conversationService);
@@ -280,10 +282,10 @@ export async function handleTextMessage(
     quickReplies.unshift({ label: '✅ แก้ได้แล้ว', text: 'แก้ได้แล้ว' });
     quickReplies.unshift({ label: '❌ ยังแก้ไม่ได้', text: 'ยังแก้ไม่ได้' });
   } else if (responseType === 'IT_INFO') {
-    quickReplies.unshift({ label: '🚀 เริ่มสนทนาใหม่', text: '/start' });
+    quickReplies.unshift({ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' });
     quickReplies.unshift({ label: '📊 ให้คะแนนคำตอบ', text: 'แก้ได้แล้ว' }); // Trick 'แก้ได้แล้ว' to trigger rating
   } else if (responseType === 'OUT_OF_SCOPE') {
-    quickReplies.unshift({ label: '🚀 เริ่มสนทนาใหม่', text: '/start' });
+    quickReplies.unshift({ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' });
   }
 
   return messaging.replyTextWithQuickReply(replyToken, aiResponse, quickReplies);

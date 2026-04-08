@@ -7,6 +7,7 @@ import * as registrationHandlers from './line/handlers/registration.js';
 import * as supportHandlers from './line/handlers/support.js';
 import * as mediaHandlers from './line/handlers/media.js';
 import User from '../models/User.js';
+import { logger } from '../utils/logger.js';
 
 export class LineService {
   private messaging: MessagingService;
@@ -29,7 +30,7 @@ export class LineService {
 
     const userId = source.type === 'user' ? source.userId : source.type === 'group' ? source.userId : undefined;
     if (!userId) {
-      console.warn('No userId found in event source');
+      logger.warn('No userId found in event source');
       return;
     }
 
@@ -96,7 +97,7 @@ export class LineService {
           return this.messaging.replyText(replyToken, 'ขออภัยครับ รองรับเฉพาะข้อความ, รูปภาพ และไฟล์ PDF เท่านั้น');
       }
     } catch (error) {
-      console.error('Error handling message:', error);
+      logger.error('Error handling message:', error);
       return this.messaging.replyText(replyToken, 'เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง');
     }
   }

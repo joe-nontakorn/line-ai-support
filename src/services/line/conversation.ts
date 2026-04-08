@@ -4,6 +4,7 @@ import User from '../../models/User.js';
 import geminiService from '../gemini.js';
 import { ConversationDoc, ConversationStatus, ConversationMessage } from './types.js';
 import { getBangkokDateKey, now, sanitizeFreeText } from './utils.js';
+import { logger } from '../../utils/logger.js';
 
 export class ConversationService {
   async getActiveConversation(userId: string): Promise<ConversationDoc | null> {
@@ -95,7 +96,7 @@ export class ConversationService {
       const result = await geminiService.analyzeIssue(messages);
       return typeof result === 'string' && result.trim() ? result.trim() : 'ไม่สามารถสรุปปัญหาได้';
     } catch (error) {
-      console.error('Error analyzing issue:', error);
+      logger.error('Error analyzing issue:', error);
       return 'ไม่สามารถสรุปปัญหาได้';
     }
   }

@@ -5,6 +5,9 @@ import { ConversationService } from '../conversation.js';
 import { ConversationDoc } from '../types.js';
 import geminiService from '../../gemini.js';
 import Ticket from '../../../models/Ticket.js';
+import { logger } from '../../../utils/logger.js';
+
+const apiAsset = process.env.API_ASSET || 'http://172.16.1.16:3000/api';
 
 export async function promptForRating(
   replyToken: string,
@@ -60,7 +63,7 @@ export async function handleRating(
   return messaging.replyTextWithQuickReply(
     replyToken,
     'ขอบคุณสำหรับคะแนนประเมินครับ! หากมีปัญหาอื่นๆ สอบถามได้เสมอครับ 😊',
-    [{ label: '🚀 เริ่มสนทนาใหม่', text: '/start' }],
+    [{ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' }],
   );
 }
 
@@ -129,14 +132,14 @@ export async function escalateToSupport(
     return messaging.replyTextWithQuickReply(
       replyToken,
       'ขออภัยครับ ระบบนี้รองรับเฉพาะปัญหาด้าน IT Support เท่านั้น\n\nหากมีปัญหาด้าน IT สอบถามได้เลยครับ 😊',
-      [{ label: '🚀 เริ่มสนทนาใหม่', text: '/start' }],
+      [{ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' }],
     );
   }
   const isSkip = text?.trim() === 'ข้าม';
   if (!isSkip && conversationToUpdate.status !== 'waiting_hardware_confirm' && conversationToUpdate.status !== 'waiting_troubleshoot_confirm') {
     // 🔍 ป้องกัน Loop โดยเช็กจำนวนข้อความในสถานะนี้ (ถ้าถามไปแล้ว 2 ครั้งยังไม่เคลียร์ ก็ให้ผ่านไป)
     const userMessagesInState = conversationToUpdate.messages.filter(m => m.role === 'user').length;
-    
+
     // ถ้า issue สั้นเกินไปหรือกว้างเกินไป (เช่น "ช่วยด้วย") ถึงจะถาม clarification
     // แต่ถ้ามีข้อมูลพอสมควรแล้ว ให้ผ่านไปขั้นตอนถัดไปเลย เพื่อความรวดเร็วตามความต้องการผู้ใช้
     if (userMessagesInState <= 1 && issueSummary.length < 15) {
@@ -173,7 +176,7 @@ export async function escalateToSupport(
 
     if (isPrinter || isComputer || isOtherHw) {
       try {
-        let apiUrl = `http://172.16.1.16:3000/api/assets/search?`;
+        let apiUrl = `${apiAsset}/assets/search?`;
         let useFilter = false;
 
         if (isPrinter) {
@@ -208,7 +211,7 @@ export async function escalateToSupport(
                     const loc = (a.location_name || '').toLowerCase();
                     const desc = (a.description || '').toLowerCase();
                     return loc.includes(`${floorNum}f`) || loc.includes(`ชั้น ${floorNum}`) || loc.includes(`ชั้น${floorNum}`) ||
-                           desc.includes(`${floorNum}f`) || desc.includes(`ชั้น ${floorNum}`) || desc.includes(`ชั้น${floorNum}`);
+                      desc.includes(`${floorNum}f`) || desc.includes(`ชั้น ${floorNum}`) || desc.includes(`ชั้น${floorNum}`);
                   });
                   // กรองแล้วยังเหลือข้อมูลให้ใช้ตัวกรองนี้ (ถ้ากรองแล้วหายหมดให้ใช้ชุดเดิม)
                   if (floorFiltered.length > 0) assets = floorFiltered;
@@ -294,7 +297,7 @@ export async function escalateToSupport(
           }
         }
       } catch (err) {
-        console.error('Error fetching asset info:', err);
+        logger.error('Error fetching asset info:', err);
       }
     }
   }
@@ -367,23 +370,9 @@ export async function escalateToSupport(
   // ✅ แจ้ง Admin Group (เฉพาะปัญหา IT ที่มีการระบุชัดเจน)
   const adminGroupId = process.env.ADMIN_GROUP_ID;
 
-  // Gen Ticket ID (e.g. TIC-20230501-001)
-  const today = new Date();
-  const dateStr = today.getFullYear().toString() +
-    (today.getMonth() + 1).toString().padStart(2, '0') +
-    today.getDate().toString().padStart(2, '0');
-
-  // Count tickets created today to get the sequence
-  const startOfDay = new Date(today);
-  startOfDay.setHours(0, 0, 0, 0);
-  const endOfDay = new Date(today);
-  endOfDay.setHours(23, 59, 59, 999);
-
-  const countToday = await Ticket.countDocuments({
-    reportedAt: { $gte: startOfDay, $lte: endOfDay }
-  });
-
-  const ticketId = `TIC-${dateStr}-${(countToday + 1).toString().padStart(3, '0')}`;
+  // Gen Ticket ID (e.g. IT-A1B2C3) แบบสุ่ม (ไม่เป็นแพทเทิร์น)
+  const randomStr = Math.random().toString(36).substring(2, 8).toUpperCase();
+  const ticketId = `IT-${randomStr}`;
 
   // บันทึกข้อมูลลง MongoDB ตามรูปแบบ
   const newTicket = new Ticket({
@@ -415,7 +404,7 @@ export async function escalateToSupport(
   return messaging.replyTextWithQuickReply(
     replyToken,
     `รับทราบครับ! ✅ ระบบได้แจ้งเจ้าหน้าที่ IT Support ให้เรียบร้อยแล้ว\n🎫 เลขที่ Ticket ของคุณคือ: ${ticketId}\n\nเจ้าหน้าที่จะติดต่อกลับหาคุณโดยเร็วที่สุดครับ 🙏\n\n─────────────────\nหากต้องการแจ้งปัญหาเพิ่มเติม กดปุ่มเพื่อเริ่มการสนทนาใหม่ได้เลยครับ 👇`,
-    [{ label: '🚀 เริ่มสนทนาใหม่', text: '/start' }],
+    [{ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' }],
   );
 }
 
@@ -462,14 +451,14 @@ async function checkITRelatedWithAI(issueSummary: string, conversation: Conversa
 
     // ถ้า AI บอกว่า NON_IT_ISSUE → ไม่ใช่ IT
     if (aiResult.toUpperCase().includes('NON_IT')) {
-      console.log(`[IT-Filter] Rejected non-IT issue: "${issueSummary}" → AI: "${aiResult}"`);
+      logger.info(`[IT-Filter] Rejected non-IT issue: "${issueSummary}" → AI: "${aiResult}"`);
       return false;
     }
 
     return true;
   } catch (error) {
     // ถ้า AI ล้มเหลว ให้ผ่านไปก่อน (fail-open) เพื่อไม่ให้พลาดเคสจริง
-    console.error('[IT-Filter] AI check failed, allowing escalation:', error);
+    logger.error('[IT-Filter] AI check failed, allowing escalation:', error);
     return true;
   }
 }

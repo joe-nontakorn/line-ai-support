@@ -7,6 +7,7 @@ import { LineService } from './services/line.js';
 import { lineClient } from './services/line/client.js';
 import apiRoutes from './routes/api.js';
 import cors from 'cors';
+import { logger } from './utils/logger.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3002', 10);
@@ -26,7 +27,7 @@ app.use(cors({
 }));
 // Connect to MongoDB
 connectDB().catch(err => {
-  console.error('Failed to connect to MongoDB:', err);
+  logger.error('Failed to connect to MongoDB:', err);
   process.exit(1);
 });
 
@@ -46,7 +47,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req: Requ
 
     const expectedSignature = crypto.createHmac('SHA256', channelSecret).update(body).digest('base64');
     if (signature !== expectedSignature) {
-      console.error('SignatureValidationFailed: signature validation failed');
+      logger.error('SignatureValidationFailed: signature validation failed');
       res.status(401).send('SignatureValidationFailed');
       return;
     }
@@ -64,7 +65,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req: Requ
           // ป้องกัน bot ทำงานกับข้อความใน group/room
           if (event.source.type === 'group' || event.source.type === 'room') {
             const groupId = (event.source as any).groupId || (event.source as any).roomId;
-            console.log(`Received message in group/room. ID: ${groupId}`);
+            logger.info(`Received message in group/room. ID: ${groupId}`);
             return;
           }
 
@@ -73,24 +74,24 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req: Requ
           if (['text', 'image', 'file', 'sticker'].includes(messageType)) {
             await lineService.handleMessage(event);
           } else {
-            console.log(`Unsupported message type: ${messageType}`);
+            logger.warn(`Unsupported message type: ${messageType}`);
           }
         } else if (event.type === 'join') {
-          console.log(`Bot joined a ${event.source.type}! ID: ${(event.source as any).groupId || (event.source as any).roomId}`);
+          logger.info(`Bot joined a ${event.source.type}! ID: ${(event.source as any).groupId || (event.source as any).roomId}`);
         } else if (event.type === 'leave') {
-          console.log(`Bot left a ${event.source.type}! ID: ${(event.source as any).groupId || (event.source as any).roomId}`);
+          logger.info(`Bot left a ${event.source.type}! ID: ${(event.source as any).groupId || (event.source as any).roomId}`);
         } else if (event.type === 'follow') {
           await lineService.handleFollow(event);
         } else {
-          console.log(`Received event type: ${event.type}`);
+          logger.info(`Received event type: ${event.type}`);
         }
       })
     ).catch(err => {
-      console.error('Background Webhook processing error:', err);
+      logger.error('Background Webhook processing error:', err);
     });
 
   } catch (error: any) {
-    console.error('Webhook payload error:', error);
+    logger.error('Webhook payload error:', error);
     if (!res.headersSent) {
       res.status(500).json({
         status: 'error',
@@ -120,7 +121,7 @@ app.use('/api', apiRoutes);
 
 // Error handling middleware
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
-  console.error('Error:', err);
+  logger.error('Error:', err);
   res.status(500).json({
     success: false,
     error: err.message || 'Internal server error'
@@ -131,9 +132,9 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 
 // Start server
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server is running on port ${PORT}`);
-  console.log(`📍 Webhook URL: http://0.0.0.0:${PORT}/webhook`);
-  console.log(`📊 API URL: http://0.0.0.0:${PORT}/api`);
+  logger.info(`🚀 Server is running on port ${PORT}`);
+  logger.info(`📍 Webhook URL: http://0.0.0.0:${PORT}/webhook`);
+  logger.info(`📊 API URL: http://0.0.0.0:${PORT}/api`);
 });
 
 export default app;

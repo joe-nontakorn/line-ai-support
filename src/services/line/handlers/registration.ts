@@ -4,6 +4,7 @@ import { MessagingService } from '../messaging.js';
 import { RegistrationService } from '../registration.js';
 import { ConversationService } from '../conversation.js';
 import { normalizePhone } from '../utils.js';
+import { logger } from '../../../utils/logger.js';
 
 export async function handleRegistration(
   replyToken: string,
@@ -77,7 +78,7 @@ export async function handleRegistration(
         );
       }
     } catch (error) {
-      console.error('API validation error:', error);
+      logger.error('API validation error:', error);
       return messaging.replyText(replyToken, 'ระบบตรวจสอบข้อมูลขัดข้อง กรุณาลองใหม่อีกครั้งในภายหลังครับ');
     }
   }
@@ -152,9 +153,9 @@ export async function handleRegistration(
       state.tempPayload.email
     );
     if (updateResult) {
-       console.log(`✅ Successfully updated phone for employee ${state.tempPayload.employeeId} in external database`);
+       logger.info(`✅ Successfully updated phone for employee ${state.tempPayload.employeeId} in external database`);
     } else {
-       console.error(`❌ Failed to update phone for employee ${state.tempPayload.employeeId} in external database (Check API logs)`);
+       logger.error(`❌ Failed to update phone for employee ${state.tempPayload.employeeId} in external database (Check API logs)`);
     }
 
     // 💾 Save to local DB (Always save local even if external fails so user can still chat)
