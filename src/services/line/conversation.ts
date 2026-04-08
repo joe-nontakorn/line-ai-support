@@ -20,9 +20,13 @@ export class ConversationService {
     const createdKey = getBangkokDateKey(new Date(conversation.createdAt));
 
     if (todayKey !== createdKey) {
-      conversation.status = 'closed';
-      conversation.closedAt = todayDate;
-      await conversation.save();
+      if (conversation.messages.length === 0) {
+        await Conversation.deleteOne({ _id: conversation._id });
+      } else {
+        conversation.status = 'closed';
+        conversation.closedAt = todayDate;
+        await conversation.save();
+      }
       return null;
     }
 

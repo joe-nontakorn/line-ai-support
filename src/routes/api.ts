@@ -83,6 +83,15 @@ router.get('/conversations', async (req: Request, res: Response) => {
     if (resolved !== undefined) filter.resolved = resolved === 'true';
     if (lineUserId) filter.lineUserId = lineUserId;
 
+    filter.$and = [
+      {
+        $or: [
+          { 'messages.0': { $exists: true } },
+          { issue: { $nin: ['', 'ไม่ระบุ', 'ไม่สามารถสรุปปัญหาได้'] } }
+        ]
+      }
+    ];
+
     const conversations = await Conversation.find(filter)
       .sort({ createdAt: -1 })
       .limit(parseInt(limit as string))
