@@ -136,7 +136,7 @@ export class MessagingService {
 
       if (!response.ok) {
         const body = await response.text().catch(() => '');
-        logger.error('Loading animation failed:', response.status, body);
+        logger.error('Loading animation failed:', { status: response.status, body });
       }
     } catch (error) {
       logger.error('Error showing loading animation:', error);
