@@ -88,7 +88,7 @@ export async function handleTextMessage(
     }
   }
 
-  const deviceKeywords = ['my device', 'my devices', 'อุปกรณ์ของฉัน', 'เครื่องของฉัน', 'เช็คอุปกรณ์', 'อุปกรณ์ที่มี', 'device ของฉัน', 'คอมของฉัน'];
+  const deviceKeywords = ['my device', 'my devices', 'อุปกรณ์ของฉัน', 'เครื่องของฉัน', 'เช็คอุปกรณ์', 'อุปกรณ์ที่มี', 'device ของฉัน', 'คอมของฉัน', 'อุปกรณ์ที่ครอบครอง', 'มีกี่เครื่อง', 'ทรัพย์สินของ', 'โน๊ตบุ๊คของฉัน', 'อุปกรณ์ของผม', 'คอมพิวเตอร์ของฉัน', 'เช็คเครื่อง'];
   if (deviceKeywords.some(kw => normalizedLower.includes(kw))) {
     const user = await conversationService.getUser(userId);
     if (user) {
