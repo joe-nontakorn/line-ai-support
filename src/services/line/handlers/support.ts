@@ -19,9 +19,12 @@ export async function promptForRating(
   conversation.status = 'waiting_rating';
   await conversation.save();
 
+  const msgText = 'ยอดเยี่ยมเลยครับ! 🎉 เพื่อเป็นกำลังใจและปรับปรุงบริการ รบกวนให้คะแนนความพึงพอใจด้วยครับ\n(1 = น้อยที่สุด, 5 = มากที่สุด)';
+  await conversationService.appendAssistantMessage(conversation, msgText);
+
   return messaging.replyTextWithQuickReply(
     replyToken,
-    'ยอดเยี่ยมเลยครับ! 🎉 เพื่อเป็นกำลังใจและปรับปรุงบริการ รบกวนให้คะแนนความพึงพอใจด้วยครับ\n(1 = น้อยที่สุด, 5 = มากที่สุด)',
+    msgText,
     [
       { label: '⭐ 1', text: '1' },
       { label: '⭐ 2', text: '2' },
@@ -60,9 +63,12 @@ export async function handleRating(
   conversation.resolved = true;
   await conversation.save();
 
+  const replyMsg = 'ขอบคุณสำหรับคะแนนประเมินครับ! หากมีปัญหาอื่นๆ สอบถามได้เสมอครับ 😊';
+  await conversationService.appendAssistantMessage(conversation, replyMsg);
+
   return messaging.replyTextWithQuickReply(
     replyToken,
-    'ขอบคุณสำหรับคะแนนประเมินครับ! หากมีปัญหาอื่นๆ สอบถามได้เสมอครับ 😊',
+    replyMsg,
     [{ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' }],
   );
 }
@@ -73,8 +79,10 @@ export async function promptForEscalationIssue(
   messaging: MessagingService,
   conversationService: ConversationService
 ): Promise<MessageAPIResponseBase | undefined> {
-  await conversationService.createNewConversation(userId, 'waiting_escalation_issue');
-  return messaging.replyText(replyToken, 'กรุณาระบุปัญหาหรือเรื่องที่ต้องการติดต่อเจ้าหน้าที่ (อธิบายให้ชัดเจน เช่น อาการที่พบ, โปรแกรมที่มีปัญหา) ครับ:');
+  const newConv = await conversationService.createNewConversation(userId, 'waiting_escalation_issue');
+  const msgText = 'กรุณาระบุปัญหาหรือเรื่องที่ต้องการติดต่อเจ้าหน้าที่ (อธิบายให้ชัดเจน เช่น อาการที่พบ, โปรแกรมที่มีปัญหา) ครับ:';
+  await conversationService.appendAssistantMessage(newConv, msgText);
+  return messaging.replyText(replyToken, msgText);
 }
 
 export async function escalateToSupport(
@@ -115,9 +123,11 @@ export async function escalateToSupport(
 
   // ❌ ไม่ส่ง admin ถ้าไม่มีการระบุปัญหา
   if (issueSummary === 'ไม่ระบุ' || issueSummary.trim() === '' || issueSummary === 'ไม่สามารถสรุปปัญหาได้') {
+    const errorMsg = '⚠️ กรุณาระบุปัญหาหรืออาการที่พบให้ชัดเจนก่อนนะครับ เจ้าหน้าที่จะได้เข้าใจและช่วยได้อย่างถูกต้อง\n\nเช่น "เชื่อมต่อ VPN ไม่ได้", "เปิด Outlook แล้ว Error", "Printer ไม่ทำงาน"';
+    await conversationService.appendAssistantMessage(conversationToUpdate, errorMsg);
     return messaging.replyText(
       replyToken,
-      '⚠️ กรุณาระบุปัญหาหรืออาการที่พบให้ชัดเจนก่อนนะครับ เจ้าหน้าที่จะได้เข้าใจและช่วยได้อย่างถูกต้อง\n\nเช่น "เชื่อมต่อ VPN ไม่ได้", "เปิด Outlook แล้ว Error", "Printer ไม่ทำงาน"'
+      errorMsg
     );
   }
 
@@ -129,9 +139,12 @@ export async function escalateToSupport(
     // ไม่บันทึก issue เพื่อไม่ให้ขึ้นในรายงานสรุปปัญหา IT
     await conversationToUpdate.save();
 
+    const rejectMsg = 'ขออภัยครับ ระบบนี้รองรับเฉพาะปัญหาด้าน IT Support เท่านั้น\n\nหากมีปัญหาด้าน IT สอบถามได้เลยครับ 😊';
+    await conversationService.appendAssistantMessage(conversationToUpdate, rejectMsg);
+
     return messaging.replyTextWithQuickReply(
       replyToken,
-      'ขออภัยครับ ระบบนี้รองรับเฉพาะปัญหาด้าน IT Support เท่านั้น\n\nหากมีปัญหาด้าน IT สอบถามได้เลยครับ 😊',
+      rejectMsg,
       [{ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' }],
     );
   }
@@ -146,9 +159,11 @@ export async function escalateToSupport(
       const clarification = await geminiService.clarifyIssue(issueSummary);
       if (clarification && clarification !== 'CLEAR') {
         await conversationToUpdate.save();
+        const clarMsg = `${clarification}\n\n(หรือพิมพ์ "ข้าม" เพื่อแจ้งเจ้าหน้าที่ทันที)`;
+        await conversationService.appendAssistantMessage(conversationToUpdate, clarMsg);
         return messaging.replyText(
           replyToken,
-          `${clarification}\n\n(หรือพิมพ์ "ข้าม" เพื่อแจ้งเจ้าหน้าที่ทันที)`
+          clarMsg
         );
       }
     }
@@ -266,6 +281,8 @@ export async function escalateToSupport(
                 let msg = `ระบบตรวจพบว่าปัญหาอาจเกี่ยวข้องกับ ${assetStr}\nใช่เครื่องนี้หรือไม่ครับ?`;
                 if (asset.location_name) msg = `ระบบตรวจพบอุปกรณ์ที่ ${asset.location_name}: ${assetStr}\nเป็นเครื่องที่มีปัญหาใช่หรือไม่ครับ?`;
 
+                await conversationService.appendAssistantMessage(conversationToUpdate, msg);
+
                 return messaging.replyTextWithQuickReply(
                   replyToken,
                   msg,
@@ -286,6 +303,8 @@ export async function escalateToSupport(
                 const promptMsg = isPrinter
                   ? `พบเครื่องพิมพ์/อุปกรณ์ส่วนกลางในระบบดังนี้ครับ ไม่ทราบว่าเป็นเครื่องไหนและอยู่ชั้นไหนครับ?\n\n${listStr}`
                   : `พบอุปกรณ์ของคุณในระบบหลายรายการ ปัญหาเกี่ยวข้องกับรายการไหนครับ?\n\n${listStr}`;
+
+                await conversationService.appendAssistantMessage(conversationToUpdate, promptMsg);
 
                 return messaging.replyTextWithQuickReply(
                   replyToken,
@@ -316,9 +335,12 @@ export async function escalateToSupport(
     conversationToUpdate.issue = issueSummary;
     await conversationToUpdate.save();
 
+    const adviceMsg = `💡 ลองทำตามขั้นตอนเบื้องต้นด้านล่างนี้ดูนะครับ อาจช่วยให้ปัญหาคุณดีขึ้นทันที:\n\n${advice}\n\nลองทำตามดูแล้วเป็นอย่างไรบ้างครับ?`;
+    await conversationService.appendAssistantMessage(conversationToUpdate, adviceMsg);
+
     return messaging.replyTextWithQuickReply(
       replyToken,
-      `💡 ลองทำตามขั้นตอนเบื้องต้นด้านล่างนี้ดูนะครับ อาจช่วยให้ปัญหาคุณดีขึ้นทันที:\n\n${advice}\n\nลองทำตามดูแล้วเป็นอย่างไรบ้างครับ?`,
+      adviceMsg,
       [
         { label: '✅ พิมพ์แก้ได้แล้ว', text: 'แก้ได้แล้ว' },
         { label: '❌ ยังแก้ไม่ได้', text: 'ยังแก้ไม่ได้' }
@@ -401,9 +423,12 @@ export async function escalateToSupport(
   }
 
   // ✅ ตอบกลับผู้ใช้พร้อมปุ่มเริ่มสนทนาใหม่
+  const finalMsg = `รับทราบครับ! ✅ ระบบได้แจ้งเจ้าหน้าที่ IT Support ให้เรียบร้อยแล้ว\n🎫 เลขที่ Ticket ของคุณคือ: ${ticketId}\n\nเจ้าหน้าที่จะติดต่อกลับหาคุณโดยเร็วที่สุดครับ 🙏\n\n─────────────────\nหากต้องการแจ้งปัญหาเพิ่มเติม กดปุ่มเพื่อเริ่มการสนทนาใหม่ได้เลยครับ 👇`;
+  await conversationService.appendAssistantMessage(conversationToUpdate, finalMsg);
+
   return messaging.replyTextWithQuickReply(
     replyToken,
-    `รับทราบครับ! ✅ ระบบได้แจ้งเจ้าหน้าที่ IT Support ให้เรียบร้อยแล้ว\n🎫 เลขที่ Ticket ของคุณคือ: ${ticketId}\n\nเจ้าหน้าที่จะติดต่อกลับหาคุณโดยเร็วที่สุดครับ 🙏\n\n─────────────────\nหากต้องการแจ้งปัญหาเพิ่มเติม กดปุ่มเพื่อเริ่มการสนทนาใหม่ได้เลยครับ 👇`,
+    finalMsg,
     [{ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' }],
   );
 }

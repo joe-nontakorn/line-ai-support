@@ -88,8 +88,14 @@ export async function handleTextMessage(
     }
   }
 
-  const deviceKeywords = ['my device', 'my devices', 'อุปกรณ์ของฉัน', 'เครื่องของฉัน', 'เช็คอุปกรณ์', 'อุปกรณ์ที่มี', 'device ของฉัน', 'คอมของฉัน', 'อุปกรณ์ที่ครอบครอง', 'มีกี่เครื่อง', 'ทรัพย์สินของ', 'โน๊ตบุ๊คของฉัน', 'อุปกรณ์ของผม', 'คอมพิวเตอร์ของฉัน', 'เช็คเครื่อง'];
-  if (deviceKeywords.some(kw => normalizedLower.includes(kw))) {
+  const isDeviceQuery = 
+    /(เช็ค|ตรวจสอบ|ดู)?\s*(อุปกรณ์|เครื่อง|คอม|คอมพิวเตอร์|โน๊ตบุ๊ค|ทรัพย์สิน|device)\s*(ของฉัน|ของผม|ของหนู|ของพี่|ที่มี|ที่ครอบครอง|ที่ใช้อยู่|ที่ถืออยู่)/i.test(normalizedLower) ||
+    /(ครอบครอง|มี).*(อุปกรณ์|เครื่อง|คอม|คอมพิวเตอร์|โน๊ตบุ๊ค).*(กี่เครื่อง|อะไรบ้าง|กี่อัน)/i.test(normalizedLower) ||
+    /my\s*devices?/i.test(normalizedLower) ||
+    /(เช็ค|ตรวจสอบ)\s*(อุปกรณ์|เครื่อง|คอม|สเปค)/i.test(normalizedLower) ||
+    normalizedLower.includes('ครอบครอง');
+
+  if (isDeviceQuery) {
     const user = await conversationService.getUser(userId);
     if (user) {
       await messaging.showLoadingAnimation(userId, LOADING_SECONDS);
@@ -283,7 +289,7 @@ export async function handleTextMessage(
     quickReplies.unshift({ label: '❌ ยังแก้ไม่ได้', text: 'ยังแก้ไม่ได้' });
   } else if (responseType === 'IT_INFO') {
     quickReplies.unshift({ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' });
-    quickReplies.unshift({ label: '📊 ให้คะแนนคำตอบ', text: 'แก้ได้แล้ว' }); // Trick 'แก้ได้แล้ว' to trigger rating
+    quickReplies.unshift({ label: '📊 ให้คะแนนคำตอบ', text: 'ให้คะแนนคำตอบ' }); // Trick 'แก้ได้แล้ว' to trigger rating
   } else if (responseType === 'OUT_OF_SCOPE') {
     quickReplies.unshift({ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' });
   }
