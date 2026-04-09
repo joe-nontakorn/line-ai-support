@@ -61,6 +61,68 @@ export async function handleTextMessage(
 ): Promise<MessageAPIResponseBase | undefined> {
   const normalizedLower = text.toLowerCase().trim();
 
+  // ✅ ตรวจสอบการยืนยันปิดเคสจาก User
+  const confirmMatch = text.match(/ยืนยันปิดเคส\s+(IT-[A-Z0-9]+)/i);
+  if (confirmMatch) {
+    const ticketId = confirmMatch[1].toUpperCase();
+    const ticket = await Ticket.findOne({ ticketId });
+    if (ticket && ticket.status === 'waiting_user_confirm') {
+      ticket.status = 'resolved';
+      ticket.resolvedAt = new Date();
+      ticket.statusHistory.push({
+        status: 'resolved',
+        changedAt: new Date(),
+        changedBy: 'User (System)',
+        comment: 'User confirmed the resolve.'
+      });
+      await ticket.save();
+
+      // ปิด conversation ที่เกี่ยวข้อง (ถ้าหาเจอ)
+      const conv = await conversationService.getLatestConversationByStatuses(userId, ['active', 'waiting_escalation_issue', 'waiting_hardware_confirm', 'waiting_troubleshoot_confirm']);
+      if (conv) {
+        conv.resolved = true;
+        conv.status = 'waiting_rating';
+        await conv.save();
+        return handleRating(replyToken, userId, '5', conv, messaging, conversationService); // เริ่มขั้นตอนให้คะแนนเลย
+      }
+
+      return messaging.replyTextWithQuickReply(
+        replyToken,
+        `✅ ขอบคุณสำหรับคำยืนยันครับ! ระบบได้ปิด Ticket ${ticketId} เรียบร้อยแล้ว\n\nหากมีปัญหาอื่นๆ สามารถแจ้งเข้ามาใหม่ได้เสมอครับ 😊`,
+        [{ label: '🚀 เริ่มสนทนาใหม่', text: '/start' }]
+      );
+    }
+  }
+
+  // ✅ ตรวจสอบกรณี User แจ้งว่ายังเสียอยู่
+  const persistsMatch = text.match(/เคส\s+(IT-[A-Z0-9]+)\s+ยังเสียอยู่/i);
+  if (persistsMatch) {
+    const ticketId = persistsMatch[1].toUpperCase();
+    const ticket = await Ticket.findOne({ ticketId });
+    if (ticket && ticket.status === 'waiting_user_confirm') {
+      ticket.status = 'in_progress';
+      ticket.statusHistory.push({
+        status: 'in_progress',
+        changedAt: new Date(),
+        changedBy: 'User (System)',
+        comment: 'User reported that the issue persists.'
+      });
+      await ticket.save();
+
+      // แจ้งห้อง Admin (ใช้ MessagingService ช่วยได้ถ้ามี function ให้บริการ)
+      // ในที่นี้สมมติว่า admin group id เก็บใน env
+      const adminGroupId = process.env.ADMIN_GROUP_ID;
+      if (adminGroupId) {
+        await messaging.pushText(adminGroupId, `⚠️ User แจ้งว่าเคส ${ticketId} ยังแก้ไขไม่สำเร็จ! กรุณาตรวจสอบและติดต่อผู้ประกอบการอีกครั้ง\n👤 ผู้แจ้ง: ${ticket.name}\n📝 ปัญหา: ${ticket.issueSummary}`);
+      }
+
+      return messaging.replyText(
+        replyToken,
+        `รับทราบครับ! ระบบได้แจ้งเจ้าหน้าที่ IT ให้ทราบแล้วว่าปัญหายังไม่ได้รับการแก้ไขในเคส ${ticketId}\n\nเจ้าหน้าที่จะรีบทบทวนและดำเนินการให้ใหม่โดยด่วนครับ ขออภัยในความไม่สะดวกครับ 🙏`
+      );
+    }
+  }
+
   // ตรวจสอบว่าผู้ใช้พิมพ์ถามสถานะ Ticket หรือไม่ (เช่น IT-A1B2C3 หรือ TIC-2026...)
   const ticketMatch = text.match(/(?:IT-[A-Z0-9]+|TIC-\d{8}-\d{3})/i);
   if (ticketMatch) {
@@ -88,7 +150,7 @@ export async function handleTextMessage(
     }
   }
 
-  const isDeviceQuery = 
+  const isDeviceQuery =
     /(เช็ค|ตรวจสอบ|ดู)?\s*(อุปกรณ์|เครื่อง|คอม|คอมพิวเตอร์|โน๊ตบุ๊ค|ทรัพย์สิน|device)\s*(ของฉัน|ของผม|ของหนู|ของพี่|ที่มี|ที่ครอบครอง|ที่ใช้อยู่|ที่ถืออยู่)/i.test(normalizedLower) ||
     /(ครอบครอง|มี).*(อุปกรณ์|เครื่อง|คอม|คอมพิวเตอร์|โน๊ตบุ๊ค).*(กี่เครื่อง|อะไรบ้าง|กี่อัน)/i.test(normalizedLower) ||
     /my\s*devices?/i.test(normalizedLower) ||

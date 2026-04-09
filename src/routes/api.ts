@@ -381,7 +381,7 @@ router.put('/tickets/:id/status', async (req: Request, res: Response): Promise<a
     const { status, changedBy, resolutionComment } = req.body;
 
     // ✅ ตรวจสอบค่า status ที่ส่งมา
-    const validStatuses = ['pending', 'in_progress', 'resolved'];
+    const validStatuses = ['pending', 'in_progress', 'waiting_user_confirm', 'resolved'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
@@ -401,7 +401,8 @@ router.put('/tickets/:id/status', async (req: Request, res: Response): Promise<a
     // ✅ ตรวจสอบ status transition ว่าถูกต้อง
     const allowedTransitions: Record<string, string[]> = {
       'pending': ['in_progress'],
-      'in_progress': ['resolved'],
+      'in_progress': ['waiting_user_confirm', 'resolved'],
+      'waiting_user_confirm': ['in_progress', 'resolved'],
       'resolved': [] // ไม่สามารถเปลี่ยนสถานะจาก resolved ได้
     };
 
@@ -412,16 +413,18 @@ router.put('/tickets/:id/status', async (req: Request, res: Response): Promise<a
       });
     }
 
-    // ✅ บังคับให้ใส่ resolutionComment เมื่อจะเปลี่ยนเป็น resolved
-    if (status === 'resolved') {
+    // ✅ บังคับให้ใส่ resolutionComment เมื่อจะเปลี่ยนเป็น resolved หรือ waiting_user_confirm
+    if (status === 'resolved' || status === 'waiting_user_confirm') {
       if (!resolutionComment || resolutionComment.trim() === '') {
         return res.status(400).json({
           success: false,
-          error: 'resolutionComment is required when resolving a ticket. กรุณาระบุวิธีแก้ปัญหาเพื่อใช้เป็นข้อมูลสำหรับ AI วิเคราะห์'
+          error: 'resolutionComment is required when resolving or notifying user. กรุณาระบุวิธีแก้ปัญหาเพื่อใช้เป็นข้อมูลแจ้งผู้ใช้งาน'
         });
       }
       ticket.resolutionComment = resolutionComment.trim();
-      ticket.resolvedAt = new Date();
+      if (status === 'resolved') {
+        ticket.resolvedAt = new Date();
+      }
     }
 
     // ✅ อัปเดตสถานะ
@@ -436,7 +439,7 @@ router.put('/tickets/:id/status', async (req: Request, res: Response): Promise<a
       status,
       changedAt: new Date(),
       changedBy: changedBy || '',
-      comment: status === 'resolved' ? resolutionComment?.trim() : ''
+      comment: (status === 'resolved' || status === 'waiting_user_confirm') ? resolutionComment?.trim() : ''
     });
 
     await ticket.save();
@@ -456,6 +459,23 @@ router.put('/tickets/:id/status', async (req: Request, res: Response): Promise<a
           `เจ้าหน้าที่กำลังตรวจสอบและแก้ไขปัญหาให้คุณครับ\n\n` +
           `─────────────────\n` +
           `หากต้องการแจ้งปัญหาเพิ่มเติม กดปุ่มด้านล่างได้เลยครับ 👇`;
+      } else if (status === 'waiting_user_confirm') {
+        message = 
+          `🛠️ เจ้าหน้าที่แจ้งแก้ไขงานเรียบร้อยแล้ว!${staffName}\n\n` +
+          `🎫 Ticket: ${ticket.ticketId}\n` +
+          `📝 ปัญหา: ${ticket.issueSummary}\n\n` +
+          `✅ วิธีแก้: ${resolutionComment}\n\n` +
+          `กรุณายืนยันว่าปัญหาได้รับการแก้ไขแล้วหรือไม่ครับ? 👇`;
+
+        await messagingService.pushTextWithQuickReply(
+          user.lineUserId,
+          message,
+          [
+            { label: '✅ ใช่ แก้ไขแล้ว', text: `ยืนยันปิดเคส ${ticket.ticketId}` },
+            { label: '❌ ยังพบปัญหาอยู่', text: `เคส ${ticket.ticketId} ยังเสียอยู่` }
+          ]
+        );
+        return res.status(200).json({ success: true, data: ticket });
       } else if (status === 'resolved') {
         message = 
           `🎉 เคสของคุณได้รับการแก้ไขเรียบร้อยแล้ว!${staffName}\n\n` +

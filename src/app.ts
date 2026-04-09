@@ -130,11 +130,18 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 
 
 
+import { startTicketAutoCloseWorker } from './services/ticketAutoClose.js';
+
 // Start server
 app.listen(PORT, '0.0.0.0', () => {
   logger.info(`🚀 Server is running on port ${PORT}`);
   logger.info(`📍 Webhook URL: http://0.0.0.0:${PORT}/webhook`);
   logger.info(`📊 API URL: http://0.0.0.0:${PORT}/api`);
+  
+  // Start background worker for auto-closing tickets
+  startTicketAutoCloseWorker().catch(err => {
+    logger.error('Failed to start Ticket Auto-Close Worker:', err);
+  });
 });
 
 export default app;
