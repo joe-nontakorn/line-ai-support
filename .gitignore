@@ -1,30 +1,8 @@
-# Dependencies
 node_modules/
-bun.lockb
-
-# Environment variables
 .env
-examples/
-
-# Logs
-logs/
-*.log
-npm-debug.log*
-
-# OS
-.DS_Store
-Thumbs.db
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Build
 dist/
-build/
-
-# Testing
-coverage/
-.nyc_output/
+uploads/
+*.log
+bun.lockb
+.DS_Store
+*.tmp

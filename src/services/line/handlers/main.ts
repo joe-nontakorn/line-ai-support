@@ -77,20 +77,23 @@ export async function handleTextMessage(
       });
       await ticket.save();
 
-      // ปิด conversation ที่เกี่ยวข้อง (ถ้าหาเจอ)
-      const conv = await conversationService.getLatestConversationByStatuses(userId, ['active', 'waiting_escalation_issue', 'waiting_hardware_confirm', 'waiting_troubleshoot_confirm']);
+      // พยายามหาการสนทนาล่าสุดที่เกี่ยวข้อง
+      let conv = await conversationService.getLatestConversationByStatuses(userId, ['active', 'waiting_escalation_issue', 'waiting_hardware_confirm', 'waiting_troubleshoot_confirm']);
+      
       if (conv) {
         conv.resolved = true;
         conv.status = 'waiting_rating';
         await conv.save();
-        return handleRating(replyToken, userId, '5', conv, messaging, conversationService); // เริ่มขั้นตอนให้คะแนนเลย
+      } else {
+        // 🚨 กรณีไม่พบเซสชั่นเดิม (เช่น หมดอายุ) ให้สร้างใหม่เพื่อใช้รับคะแนน (Rating) เสมอ
+        conv = await conversationService.createNewConversation(userId, 'waiting_rating');
+        conv.resolved = true;
+        conv.issue = `ปิดเคสสำเร็จ: ${ticketId}`; 
+        await conv.save();
       }
 
-      return messaging.replyTextWithQuickReply(
-        replyToken,
-        `✅ ขอบคุณสำหรับคำยืนยันครับ! ระบบได้ปิด Ticket ${ticketId} เรียบร้อยแล้ว\n\nหากมีปัญหาอื่นๆ สามารถแจ้งเข้ามาใหม่ได้เสมอครับ 😊`,
-        [{ label: '🚀 เริ่มสนทนาใหม่', text: '/start' }]
-      );
+      // บังคับให้แสดงการประเมินคะแนนทุกครั้ง
+      return promptForRating(replyToken, userId, conv, messaging, conversationService);
     }
   }
 
@@ -262,6 +265,12 @@ export async function handleTextMessage(
         { label: '👤 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' },
       ],
     );
+  }
+
+  // ✅ ตรวจสอบการให้คะแนน (ถ้าอยู่ในสถานะรอคะแนน)
+  const ratingConv = await conversationService.getLatestConversationByStatuses(userId, ['waiting_rating']);
+  if (ratingConv && /^[1-5]$/.test(normalizedLower)) {
+    return handleRating(replyToken, userId, normalizedLower, ratingConv, messaging, conversationService);
   }
 
   if (text === 'แก้ได้แล้ว' || text === 'ให้คะแนนคำตอบ') {
