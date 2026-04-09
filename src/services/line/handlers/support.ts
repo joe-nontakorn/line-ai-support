@@ -274,7 +274,7 @@ export async function escalateToSupport(
               .filter(w => !stopWords.includes(w));
 
             if (issueWords.length > 0 && assets.length > 1) {
-              const scoredAssets = assets.map((a: any) => {
+              const scoredAssets: { asset: any; score: number }[] = assets.map((a: any) => {
                 const brand = (a.brand || '').toLowerCase();
                 const model = (a.model || '').toLowerCase().replace(/\s+/g, '');
                 const modelOriginal = (a.model || '').toLowerCase();
