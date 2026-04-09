@@ -239,96 +239,101 @@ export async function escalateToSupport(
             if (useFilter) {
               if (isPrinter) {
                 assets = assets.filter((a: any) => a.type_name === 'Printer');
-
-                // 🧠 Relevance Scoring: วิเคราะห์ Brand, Model, Description, Location
-                // เพื่อหาเครื่องที่ตรงกับปัญหาของ user มากที่สุด
-                const issueWords = summaryLower
-                  .replace(/[^\u0E00-\u0E7Fa-z0-9\s]/gi, ' ') // ลบอักขระพิเศษ
-                  .split(/\s+/)
-                  .filter(w => w.length >= 2)
-                  // กรองคำทั่วไปที่ไม่ควรใช้ match (stop words)
-                  .filter(w => ![
-                    'ปริ้น', 'printer', 'เครื่อง', 'เครื่องพิมพ์', 'พิมพ์', 'ไม่', 'ได้', 'ไม่ได้',
-                    'ออก', 'ไม่ออก', 'มี', 'ปัญหา', 'แก้', 'ไข', 'แก้ไข', 'ช่วย', 'ครับ', 'ค่ะ',
-                    'ที่', 'ของ', 'และ', 'หรือ', 'กับ', 'ใน', 'จะ', 'ให้', 'เป็น', 'อยู่',
-                    'ไฟ', 'สี', 'แดง', 'เขียว', 'เหลือง', 'ส้ม', 'กะพริบ', 'ติด', 'ดับ',
-                    'กระดาษ', 'หมึก', 'ติด', 'จาม', 'error', 'ทำงาน', 'ใช้', 'งาน',
-                    'รุ่น', 'model', 'brand', 'ยี่ห้อ', 'เครื่องนี้',
-                  ].includes(w));
-
-                if (issueWords.length > 0) {
-                  // คำนวณคะแนน relevance ของแต่ละ asset
-                  const scoredAssets = assets.map((a: any) => {
-                    const brand = (a.brand || '').toLowerCase();
-                    const model = (a.model || '').toLowerCase().replace(/\s+/g, ''); // "P 502" → "p502"
-                    const desc = (a.description || '').toLowerCase();
-                    const loc = (a.location_name || '').toLowerCase();
-                    const searchable = `${brand} ${model} ${a.model || ''} ${desc} ${loc}`.toLowerCase();
-
-                    let score = 0;
-                    for (const word of issueWords) {
-                      const wordNoSpace = word.replace(/\s+/g, '');
-                      // Brand match (น้ำหนัก 3)
-                      if (brand.includes(word)) score += 3;
-                      // Model match — เทียบทั้งแบบมี space และไม่มี (น้ำหนัก 5)
-                      if (model.includes(wordNoSpace) || (a.model || '').toLowerCase().includes(word)) score += 5;
-                      // Description match — เช่น "บัญชี", "IDC", "ACC" (น้ำหนัก 4)
-                      if (desc.includes(word)) score += 4;
-                      // Location match — เช่น "7f", "office" (น้ำหนัก 2)
-                      if (loc.includes(word)) score += 2;
-                    }
-
-                    return { asset: a, score };
-                  });
-
-                  // เรียงตามคะแนนจากมากไปน้อย
-                  scoredAssets.sort((a, b) => b.score - a.score);
-
-                  const maxScore = scoredAssets[0]?.score || 0;
-                  if (maxScore > 0) {
-                    // เอาเฉพาะ asset ที่มีคะแนนสูงสุด (หรือใกล้เคียง ±30%)
-                    const threshold = Math.max(maxScore * 0.7, 1);
-                    assets = scoredAssets
-                      .filter(s => s.score >= threshold)
-                      .map(s => s.asset);
-                  }
-                }
-
-                // กรองเพิ่มเติมด้วยชั้น (ถ้า user ระบุ)
-                const floorMatch = summaryLower.match(/ชั้น\s*(\d+)/i) || summaryLower.match(/(\d+)\s*f/i);
-                if (floorMatch) {
-                  const floorNum = floorMatch[1] || floorMatch[2];
-                  const floorFiltered = assets.filter((a: any) => {
-                    const loc = (a.location_name || '').toLowerCase();
-                    const desc = (a.description || '').toLowerCase();
-                    return loc.includes(`${floorNum}f`) || loc.includes(`ชั้น ${floorNum}`) || loc.includes(`ชั้น${floorNum}`) ||
-                      desc.includes(`${floorNum}f`) || desc.includes(`ชั้น ${floorNum}`) || desc.includes(`ชั้น${floorNum}`);
-                  });
-                  if (floorFiltered.length > 0) assets = floorFiltered;
-                }
-
-                // กรองขาวดำ/สี (ต้องระบุชัดเจน)
-                const isBW = summaryLower.includes('ขาวดำ') || summaryLower.includes('ขาว-ดำ');
-                const isColor = /(ปริ้น|เครื่อง|พิมพ์|printer)\s*สี/i.test(summaryLower) && !isBW;
-
-                if (isBW) {
-                  const bwFiltered = assets.filter((a: any) => {
-                    const desc = (a.description || '').toLowerCase();
-                    return desc.includes('ขาวดำ') || desc.includes('ขาว-ดำ') || desc.includes('ดำ') || desc.includes('bw');
-                  });
-                  if (bwFiltered.length > 0) assets = bwFiltered;
-                } else if (isColor) {
-                  const colorFiltered = assets.filter((a: any) => {
-                    const desc = (a.description || '').toLowerCase();
-                    return desc.includes('สี') || desc.includes('color');
-                  });
-                  if (colorFiltered.length > 0) assets = colorFiltered;
-                }
-
               } else if (isComputer) {
                 assets = assets.filter((a: any) =>
                   a.type_name === 'Laptop' || a.type_name === 'Desktop'
                 );
+              }
+            }
+
+            // 🧠 Relevance Scoring: วิเคราะห์ Brand, Model, Description, Location
+            // ใช้กับ hardware ทุกประเภท (Printer, Computer, Other)
+            const commonStopWords = [
+              'เครื่อง', 'ไม่', 'ได้', 'ไม่ได้', 'มี', 'ปัญหา', 'แก้', 'ไข', 'แก้ไข',
+              'ช่วย', 'ครับ', 'ค่ะ', 'ที่', 'ของ', 'และ', 'หรือ', 'กับ', 'ใน', 'จะ',
+              'ให้', 'เป็น', 'อยู่', 'ไฟ', 'สี', 'แดง', 'เขียว', 'เหลือง', 'ส้ม',
+              'กะพริบ', 'ติด', 'ดับ', 'error', 'ทำงาน', 'ใช้', 'งาน',
+              'รุ่น', 'model', 'brand', 'ยี่ห้อ', 'เครื่องนี้', 'เปิด', 'ปิด',
+              'บอก', 'ว่า', 'ตอน', 'แล้ว', 'แต่', 'ก็', 'จะ', 'ยัง', 'คือ',
+            ];
+            const printerStopWords = ['ปริ้น', 'printer', 'เครื่องพิมพ์', 'พิมพ์', 'ออก', 'ไม่ออก', 'กระดาษ', 'หมึก', 'จาม'];
+            const computerStopWords = ['คอม', 'โน๊ตบุ๊ค', 'laptop', 'desktop', 'พีซี', 'เครื่องเสีย', 'เปิดไม่ติด', 'จอดำ', 'จอฟ้า', 'ค้าง', 'ช้า'];
+            const otherHwStopWords = ['อุปกรณ์', 'ฮาร์ดแวร์', 'พัง'];
+
+            const stopWords = [
+              ...commonStopWords,
+              ...(isPrinter ? printerStopWords : []),
+              ...(isComputer ? computerStopWords : []),
+              ...(isOtherHw ? otherHwStopWords : []),
+            ];
+
+            const issueWords = summaryLower
+              .replace(/[^\u0E00-\u0E7Fa-z0-9\s]/gi, ' ')
+              .split(/\s+/)
+              .filter(w => w.length >= 2)
+              .filter(w => !stopWords.includes(w));
+
+            if (issueWords.length > 0 && assets.length > 1) {
+              const scoredAssets = assets.map((a: any) => {
+                const brand = (a.brand || '').toLowerCase();
+                const model = (a.model || '').toLowerCase().replace(/\s+/g, '');
+                const modelOriginal = (a.model || '').toLowerCase();
+                const desc = (a.description || '').toLowerCase();
+                const loc = (a.location_name || '').toLowerCase();
+
+                let score = 0;
+                for (const word of issueWords) {
+                  const wordNoSpace = word.replace(/\s+/g, '');
+                  if (brand.includes(word)) score += 3;                    // Brand match
+                  if (model.includes(wordNoSpace) || modelOriginal.includes(word)) score += 5; // Model match
+                  if (desc.includes(word)) score += 4;                     // Description match
+                  if (loc.includes(word)) score += 2;                      // Location match
+                }
+
+                return { asset: a, score };
+              });
+
+              scoredAssets.sort((a, b) => b.score - a.score);
+
+              const maxScore = scoredAssets[0]?.score || 0;
+              if (maxScore > 0) {
+                const threshold = Math.max(maxScore * 0.7, 1);
+                assets = scoredAssets
+                  .filter(s => s.score >= threshold)
+                  .map(s => s.asset);
+              }
+            }
+
+            // กรองเพิ่มเติมด้วยชั้น (ถ้า user ระบุ — ใช้ได้กับทุกประเภท)
+            const floorMatch = summaryLower.match(/ชั้น\s*(\d+)/i) || summaryLower.match(/(\d+)\s*f/i);
+            if (floorMatch) {
+              const floorNum = floorMatch[1] || floorMatch[2];
+              const floorFiltered = assets.filter((a: any) => {
+                const loc = (a.location_name || '').toLowerCase();
+                const desc = (a.description || '').toLowerCase();
+                return loc.includes(`${floorNum}f`) || loc.includes(`ชั้น ${floorNum}`) || loc.includes(`ชั้น${floorNum}`) ||
+                  desc.includes(`${floorNum}f`) || desc.includes(`ชั้น ${floorNum}`) || desc.includes(`ชั้น${floorNum}`);
+              });
+              if (floorFiltered.length > 0) assets = floorFiltered;
+            }
+
+            // กรองขาวดำ/สี (เฉพาะ Printer)
+            if (isPrinter) {
+              const isBW = summaryLower.includes('ขาวดำ') || summaryLower.includes('ขาว-ดำ');
+              const isColorPrinter = /(ปริ้น|เครื่อง|พิมพ์|printer)\s*สี/i.test(summaryLower) && !isBW;
+
+              if (isBW) {
+                const bwFiltered = assets.filter((a: any) => {
+                  const desc = (a.description || '').toLowerCase();
+                  return desc.includes('ขาวดำ') || desc.includes('ขาว-ดำ') || desc.includes('ดำ') || desc.includes('bw');
+                });
+                if (bwFiltered.length > 0) assets = bwFiltered;
+              } else if (isColorPrinter) {
+                const colorFiltered = assets.filter((a: any) => {
+                  const desc = (a.description || '').toLowerCase();
+                  return desc.includes('สี') || desc.includes('color');
+                });
+                if (colorFiltered.length > 0) assets = colorFiltered;
               }
             }
 
