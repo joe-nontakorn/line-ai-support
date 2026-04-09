@@ -1,7 +1,7 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
 // สถานะของ Ticket
-export type TicketStatus = 'pending' | 'in_progress' | 'resolved';
+export type TicketStatus = 'pending' | 'in_progress' | 'waiting_user_confirm' | 'resolved';
 
 export interface IStatusHistory {
   status: TicketStatus;
@@ -27,7 +27,7 @@ export interface ITicket extends Document {
 }
 
 const StatusHistorySchema: Schema = new Schema({
-  status: { type: String, enum: ['pending', 'in_progress', 'resolved'], required: true },
+  status: { type: String, enum: ['pending', 'in_progress', 'waiting_user_confirm', 'resolved'], required: true },
   changedAt: { type: Date, default: Date.now },
   changedBy: { type: String, default: '' },
   comment: { type: String, default: '' }
@@ -43,7 +43,7 @@ const TicketSchema: Schema = new Schema({
   issueSummary: { type: String, required: true },
   status: { 
     type: String, 
-    enum: ['pending', 'in_progress', 'resolved'], 
+    enum: ['pending', 'in_progress', 'waiting_user_confirm', 'resolved'], 
     default: 'pending' 
   },
   statusHistory: { type: [StatusHistorySchema], default: [] },
