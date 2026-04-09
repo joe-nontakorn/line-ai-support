@@ -5,14 +5,34 @@ import Ticket from '../models/Ticket.js';
 import { lineClient } from '../services/line/client.js';
 import { MessagingService } from '../services/line/messaging.js';
 import { logger } from '../utils/logger.js';
+import multer from 'multer';
+import { getUploadDir, getFilePublicUrl } from '../utils/storage.js';
+import path from 'path';
+import { Message } from '@line/bot-sdk';
 
 const router = express.Router();
 const messagingService = new MessagingService(lineClient);
 
+// Setup multer for file uploads
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, getUploadDir());
+  },
+  filename: (_req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const upload = multer({ 
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+});
+
 /**
  * GET /api/stats - สถิติรวมของระบบ
  */
-router.get('/stats', async (req: Request, res: Response) => {
+router.get('/stats', async (_req: Request, res: Response) => {
   try {
     const totalUsers = await User.countDocuments();
     const totalConversations = await Conversation.countDocuments();
@@ -39,16 +59,29 @@ router.get('/stats', async (req: Request, res: Response) => {
       ? ((resolvedConversations / totalConversations) * 100).toFixed(2)
       : 0;
 
+    // Time-based stats
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const [conversationsToday, conversationsThisWeek] = await Promise.all([
+      Conversation.countDocuments({ createdAt: { $gte: today } }),
+      Conversation.countDocuments({ createdAt: { $gte: weekAgo } })
+    ]);
+
     res.json({
       success: true,
       data: {
         totalUsers,
         totalConversations,
         resolvedConversations,
+        unresolvedConversations: totalConversations - resolvedConversations,
         escalatedConversations,
-        resolutionRate: parseFloat(resolutionRate as string),
-        averageRating: parseFloat(avgRating.toFixed(2)),
-        totalRatings
+        resolutionRate: resolutionRate.toString(),
+        averageRating: avgRating.toFixed(2),
+        totalRatings,
+        conversationsToday,
+        conversationsThisWeek
       }
     });
   } catch (error) {
@@ -61,18 +94,14 @@ router.get('/stats', async (req: Request, res: Response) => {
 });
 
 /**
- * GET /api/conversations - ดึงรายการ conversations
- * Query params:
- *   - limit: จำนวนที่ต้องการดึง (default: 50)
- *   - skip: ข้ามกี่รายการ (pagination)
- *   - status: filter ตาม status
- *   - resolved: filter resolved true/false
+ * GET /api/conversations - ดึงรายการ conversations พร้อม Pagination
  */
 router.get('/conversations', async (req: Request, res: Response) => {
   try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const skip = (page - 1) * limit;
     const { 
-      limit = '50', 
-      skip = '0', 
       status, 
       resolved,
       lineUserId
@@ -83,47 +112,31 @@ router.get('/conversations', async (req: Request, res: Response) => {
     if (resolved !== undefined) filter.resolved = resolved === 'true';
     if (lineUserId) filter.lineUserId = lineUserId;
 
-    filter.$and = [
-      {
-        $or: [
-          { 'messages.0': { $exists: true } },
-          { issue: { $nin: ['', 'ไม่ระบุ', 'ไม่สามารถสรุปปัญหาได้'] } }
-        ]
-      }
+    // กรองเฉพาะ session ที่มีข้อความ หรือมีการระบุหัวข้อปัญหา (เพื่อความสะอาด)
+    filter.$or = [
+      { 'messages.0': { $exists: true } },
+      { issue: { $nin: ['', 'ไม่ระบุ', 'ไม่สามารถสรุปปัญหาได้'] } }
     ];
 
-    const conversations = await Conversation.find(filter)
-      .sort({ createdAt: -1 })
-      .limit(parseInt(limit as string))
-      .skip(parseInt(skip as string))
-      .lean();
-
-    // ดึงข้อมูล user มาด้วย
-    const conversationsWithUsers = await Promise.all(
-      conversations.map(async (conv) => {
-        const user = await User.findOne({ lineUserId: conv.lineUserId }).lean();
-        return {
-          ...conv,
-          user: user ? {
-            name: user.name,
-            employeeId: user.employeeId,
-            department: user.department
-          } : null
-        };
-      })
-    );
-
-    const total = await Conversation.countDocuments(filter);
+    const [conversations, total] = await Promise.all([
+      Conversation.find(filter)
+        .sort({ createdAt: -1 })
+        .limit(limit)
+        .skip(skip)
+        .lean(),
+      Conversation.countDocuments(filter)
+    ]);
 
     res.json({
       success: true,
       data: {
-        conversations: conversationsWithUsers,
+        conversations,
         pagination: {
           total,
-          limit: parseInt(limit as string),
-          skip: parseInt(skip as string),
-          hasMore: (parseInt(skip as string) + parseInt(limit as string)) < total
+          limit,
+          page,
+          totalPages: Math.ceil(total / limit),
+          hasMore: skip + conversations.length < total
         }
       }
     });
@@ -137,57 +150,160 @@ router.get('/conversations', async (req: Request, res: Response) => {
 });
 
 /**
- * GET /api/conversations/:sessionId - ดึง conversation เฉพาะ
+ * GET /api/tickets - ดึงรายการ tickets พร้อม Pagination
  */
-router.get('/conversations/:sessionId', async (req: Request, res: Response): Promise<any> => {
+router.get('/tickets', async (req: Request, res: Response) => {
   try {
-    const { sessionId } = req.params;
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const skip = (page - 1) * limit;
+    const { status } = req.query;
     
-    const conversation = await Conversation.findOne({ sessionId }).lean();
-    
-    if (!conversation) {
-      return res.status(404).json({
-        success: false,
-        error: 'Conversation not found'
-      });
-    }
+    const filter: any = {};
+    if (status) filter.status = status;
 
-    const user = await User.findOne({ lineUserId: conversation.lineUserId }).lean();
+    const [tickets, total] = await Promise.all([
+      Ticket.find(filter)
+        .sort({ reportedAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Ticket.countDocuments(filter)
+    ]);
 
-    res.json({
-      success: true,
+    res.json({ 
+      success: true, 
       data: {
-        ...conversation,
-        user: user ? {
-          name: user.name,
-          employeeId: user.employeeId,
-          department: user.department
-        } : null
-      }
+        tickets,
+        pagination: {
+          total,
+          limit,
+          page,
+          totalPages: Math.ceil(total / limit),
+          hasMore: skip + tickets.length < total
+        }
+      } 
     });
   } catch (error) {
-    logger.error('Error fetching conversation:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch conversation'
-    });
+    logger.error('Error fetching tickets:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch tickets' });
   }
 });
 
 /**
- * GET /api/users - ดึงรายการ users
+ * GET /api/issues - สรุปปัญหาที่ผู้ใช้แจ้งบ่อย
+ */
+router.get('/issues', async (req: Request, res: Response) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 10;
+    
+    // Aggregate issues from conversations
+    const issueStats = await Conversation.aggregate([
+      { $match: { issue: { $nin: ['', 'ไม่ระบุ', 'ไม่สามารถสรุปปัญหาได้'] } } },
+      {
+        $group: {
+          _id: '$issue',
+          count: { $sum: 1 },
+          resolvedCount: { $sum: { $cond: [{ $eq: ['$resolved', true] }, 1, 0] } },
+          averageRating: { $avg: '$rating' }
+        }
+      },
+      { $sort: { count: -1 } },
+      { $limit: limit },
+      {
+        $project: {
+          _id: 0,
+          issue: '$_id',
+          count: 1,
+          resolvedCount: 1,
+          averageRating: 1,
+          resolutionRate: {
+            $cond: [
+              { $gt: ['$count', 0] },
+              { $multiply: [{ $divide: ['$resolvedCount', '$count'] }, 100] },
+              0
+            ]
+          }
+        }
+      }
+    ]);
+
+    // Format resolutionRate to string with 1 decimal place as expected by frontend
+    const formattedStats = issueStats.map(item => ({
+      ...item,
+      resolutionRate: item.resolutionRate.toFixed(1)
+    }));
+
+    res.json({ success: true, data: formattedStats });
+  } catch (error) {
+    logger.error('Error fetching issue stats:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch issue stats' });
+  }
+});
+
+/**
+ * GET /api/ratings - ดึงคะแนนความพึงพอใจทั้งหมด
+ */
+router.get('/ratings', async (_req: Request, res: Response) => {
+  try {
+    const ratingStats = await Conversation.aggregate([
+      { $match: { rating: { $ne: null } } },
+      {
+        $group: {
+          _id: '$rating',
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { _id: 1 } },
+      {
+        $project: {
+          _id: 0,
+          rating: '$_id',
+          count: 1
+        }
+      }
+    ]);
+
+    // Ensure all ratings 1-5 are present
+    const fullStats = [1, 2, 3, 4, 5].map(r => {
+      const found = ratingStats.find(item => item.rating === r);
+      return found || { rating: r, count: 0 };
+    });
+
+    res.json({ success: true, data: fullStats });
+  } catch (error) {
+    logger.error('Error fetching rating stats:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch rating stats' });
+  }
+});
+
+/**
+ * GET /api/users - ดึงรายการผู้ใช้ทั้งหมดพร้อม Pagination
  */
 router.get('/users', async (req: Request, res: Response) => {
   try {
-    const { limit = '50', skip = '0' } = req.query;
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 15;
+    const search = req.query.search as string;
+    const skip = (page - 1) * limit;
 
-    const users = await User.find()
-      .sort({ registeredAt: -1 })
-      .limit(parseInt(limit as string))
-      .skip(parseInt(skip as string))
-      .lean();
+    const filter: any = {};
+    if (search) {
+      filter.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { employeeId: { $regex: search, $options: 'i' } },
+        { department: { $regex: search, $options: 'i' } }
+      ];
+    }
 
-    const total = await User.countDocuments();
+    const [users, total] = await Promise.all([
+      User.find(filter)
+        .sort({ registeredAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      User.countDocuments(filter)
+    ]);
 
     res.json({
       success: true,
@@ -195,9 +311,10 @@ router.get('/users', async (req: Request, res: Response) => {
         users,
         pagination: {
           total,
-          limit: parseInt(limit as string),
-          skip: parseInt(skip as string),
-          hasMore: (parseInt(skip as string) + parseInt(limit as string)) < total
+          limit,
+          page,
+          totalPages: Math.ceil(total / limit),
+          hasMore: skip + users.length < total
         }
       }
     });
@@ -211,301 +328,158 @@ router.get('/users', async (req: Request, res: Response) => {
 });
 
 /**
- * GET /api/issues - สรุปปัญหาที่พบบ่อย
+ * PUT /api/tickets/:ticketId/status - อัปเดตสถานะ Ticket และส่ง LINE แจ้งเตือน (รองรับไฟล์แนบ)
  */
-router.get('/issues', async (req: Request, res: Response) => {
+router.put('/tickets/:ticketId/status', upload.array('files', 5), async (req: Request, res: Response) => {
   try {
-    const { limit = '10' } = req.query;
+    const { ticketId } = req.params;
+    const { status, resolutionComment, staffName = '' } = req.body;
+    const files = req.files as Express.Multer.File[];
 
-    const issues = await Conversation.aggregate([
-      { $match: { 
-          issue: { $nin: ['', null, 'ไม่ระบุ', 'ไม่สามารถสรุปปัญหาได้'] } 
-      } },
-      { 
-        $group: {
-          _id: '$issue',
-          count: { $sum: 1 },
-          avgRating: { $avg: '$rating' },
-          resolvedCount: {
-            $sum: { $cond: ['$resolved', 1, 0] }
-          },
-          escalatedCount: {
-            $sum: { $cond: ['$escalated', 1, 0] }
-          }
-        }
-      },
-      { $sort: { count: -1 } },
-      { $limit: parseInt(limit as string) }
-    ]);
-
-    res.json({
-      success: true,
-      data: issues.map(issue => ({
-        issue: issue._id,
-        count: issue.count,
-        averageRating: issue.avgRating ? parseFloat(issue.avgRating.toFixed(2)) : null,
-        resolvedCount: issue.resolvedCount,
-        escalatedCount: issue.escalatedCount,
-        resolutionRate: ((issue.resolvedCount / issue.count) * 100).toFixed(2)
-      }))
-    });
-  } catch (error) {
-    logger.error('Error fetching issues:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch issues'
-    });
-  }
-});
-
-/**
- * GET /api/ratings - กระจายของ ratings
- */
-router.get('/ratings', async (req: Request, res: Response) => {
-  try {
-    const ratingDistribution = await Conversation.aggregate([
-      { $match: { rating: { $ne: null } } },
-      {
-        $group: {
-          _id: '$rating',
-          count: { $sum: 1 }
-        }
-      }
-    ]);
-
-    const distribution = [1, 2, 3, 4, 5].map(rating => {
-      const found = ratingDistribution.find(r => r._id === rating);
-      return {
-        rating,
-        count: found ? found.count : 0
-      };
-    });
-
-    res.json({
-      success: true,
-      data: distribution
-    });
-  } catch (error) {
-    logger.error('Error fetching ratings:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch ratings'
-    });
-  }
-});
-
-/**
- * GET /api/tickets - ดึงรายการการแจ้งเคส IT (Tickets)
- */
-router.get('/tickets', async (req: Request, res: Response) => {
-  try {
-    const { limit = '50', skip = '0', status } = req.query;
-
-    const filter: any = {};
-    if (status !== undefined) {
-      filter.status = status as string;
-    }
-
-    const tickets = await Ticket.find(filter)
-      .sort({ reportedAt: -1 })
-      .limit(parseInt(limit as string))
-      .skip(parseInt(skip as string))
-      .lean();
-
-    const total = await Ticket.countDocuments(filter);
-
-    res.json({
-      success: true,
-      data: {
-        tickets,
-        pagination: {
-          total,
-          limit: parseInt(limit as string),
-          skip: parseInt(skip as string),
-          hasMore: (parseInt(skip as string) + parseInt(limit as string)) < total
-        }
-      }
-    });
-  } catch (error) {
-    logger.error('Error fetching tickets:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch tickets'
-    });
-  }
-});
-
-/**
- * GET /api/tickets/:id - ดึงข้อมูล Ticket เฉพาะ
- */
-router.get('/tickets/:id', async (req: Request, res: Response): Promise<any> => {
-  try {
-    const { id } = req.params;
-    const ticket = await Ticket.findOne({ ticketId: id }).lean();
-
+    const ticket = await Ticket.findOne({ ticketId });
     if (!ticket) {
-      return res.status(404).json({
-        success: false,
-        error: 'Ticket not found'
-      });
+      return res.status(404).json({ success: false, error: 'Ticket not found' });
     }
 
-    res.json({
-      success: true,
-      data: ticket
-    });
-  } catch (error) {
-    logger.error('Error fetching ticket:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch ticket'
-    });
-  }
-});
-
-/**
- * PUT /api/tickets/:id/status - อัปเดตสถานะของ Ticket
- * 
- * Status Flow: pending → in_progress → resolved
- *   - pending (รอรับเรื่อง) → in_progress (กำลังดำเนินการ)
- *   - in_progress (กำลังดำเนินการ) → resolved (สำเร็จ)
- * 
- * Body: 
- *   - status: 'pending' | 'in_progress' | 'resolved'
- *   - changedBy?: string (ชื่อเจ้าหน้าที่)
- *   - resolutionComment?: string (บังคับเมื่อ status = 'resolved' — วิธีแก้ปัญหาสำหรับ AI วิเคราะห์)
- */
-router.put('/tickets/:id/status', async (req: Request, res: Response): Promise<any> => {
-  try {
-    const { id } = req.params;
-    const { status, changedBy, resolutionComment } = req.body;
-
-    // ✅ ตรวจสอบค่า status ที่ส่งมา
-    const validStatuses = ['pending', 'in_progress', 'waiting_user_confirm', 'resolved'];
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        error: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
-      });
+    const user = await User.findOne({ employeeId: ticket.employeeId });
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
     }
 
-    // ✅ ดึง ticket ปัจจุบันเพื่อตรวจสอบ transition
-    const ticket = await Ticket.findOne({ ticketId: id });
-    if (!ticket) {
-      return res.status(404).json({
-        success: false,
-        error: 'Ticket not found'
-      });
-    }
-
-    // ✅ ตรวจสอบ status transition ว่าถูกต้อง
-    const allowedTransitions: Record<string, string[]> = {
-      'pending': ['in_progress'],
-      'in_progress': ['waiting_user_confirm', 'resolved'],
-      'waiting_user_confirm': ['in_progress', 'resolved'],
-      'resolved': [] // ไม่สามารถเปลี่ยนสถานะจาก resolved ได้
-    };
-
-    if (!allowedTransitions[ticket.status]?.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        error: `Cannot change status from "${ticket.status}" to "${status}". Allowed: ${allowedTransitions[ticket.status]?.join(', ') || 'none'}`
-      });
-    }
-
-    // ✅ บังคับให้ใส่ resolutionComment เมื่อจะเปลี่ยนเป็น resolved หรือ waiting_user_confirm
-    if (status === 'resolved' || status === 'waiting_user_confirm') {
-      if (!resolutionComment || resolutionComment.trim() === '') {
-        return res.status(400).json({
-          success: false,
-          error: 'resolutionComment is required when resolving or notifying user. กรุณาระบุวิธีแก้ปัญหาเพื่อใช้เป็นข้อมูลแจ้งผู้ใช้งาน'
+    // จัดการไฟล์แนบ
+    const attachments: any[] = [];
+    if (files && files.length > 0) {
+      files.forEach(file => {
+        const isImage = file.mimetype.startsWith('image/');
+        attachments.push({
+          url: getFilePublicUrl(file.filename),
+          type: isImage ? 'image' : 'file',
+          filename: file.originalname,
+          size: file.size
         });
-      }
-      ticket.resolutionComment = resolutionComment.trim();
-      if (status === 'resolved') {
-        ticket.resolvedAt = new Date();
-      }
+      });
     }
 
-    // ✅ อัปเดตสถานะ
+    const oldStatus = ticket.status;
     ticket.status = status;
-
-    if (status === 'in_progress') {
+    if (resolutionComment) ticket.resolutionComment = resolutionComment;
+    
+    if (status === 'in_progress' && !ticket.acceptedAt) {
       ticket.acceptedAt = new Date();
     }
+    if (status === 'resolved' || status === 'waiting_user_confirm') {
+      ticket.resolvedAt = new Date();
+    }
 
-    // ✅ บันทึกประวัติการเปลี่ยนสถานะ
+    // บันทึกประวัติสถานะ
     ticket.statusHistory.push({
       status,
       changedAt: new Date(),
-      changedBy: changedBy || '',
-      comment: (status === 'resolved' || status === 'waiting_user_confirm') ? resolutionComment?.trim() : ''
+      changedBy: staffName,
+      comment: resolutionComment || `Changed status from ${oldStatus} to ${status}`,
+      attachments
     });
+
+    // เพิ่มไฟล์แนบรวมของ Ticket
+    if (attachments.length > 0) {
+      ticket.attachments.push(...attachments);
+    }
 
     await ticket.save();
 
-    // ✅ ส่งข้อความแจ้งเตือนไปยังผู้แจ้ง (LINE) ตามสถานะที่เปลี่ยน
-    const user = await User.findOne({ employeeId: ticket.employeeId });
-    if (user && user.lineUserId) {
-      let message = '';
-      const staffName = changedBy ? ` (เจ้าหน้าที่: ${changedBy})` : '';
+    // --- ส่ง LINE แจ้งเตือน ---
+    const staffLabel = staffName ? ` (โดย ${staffName})` : '';
+    let message = '';
+    const lineMessages: Message[] = [];
 
-      if (status === 'in_progress') {
-        message = 
-          `✅ IT ได้รับเรื่องแล้ว!${staffName}\n\n` +
-          `🎫 Ticket: ${ticket.ticketId}\n` +
-          `📝 ปัญหา: ${ticket.issueSummary}\n\n` +
-          `สถานะ: กำลังดำเนินการ 🔧\n` +
-          `เจ้าหน้าที่กำลังตรวจสอบและแก้ไขปัญหาให้คุณครับ\n\n` +
-          `─────────────────\n` +
-          `หากต้องการแจ้งปัญหาเพิ่มเติม กดปุ่มด้านล่างได้เลยครับ 👇`;
-      } else if (status === 'waiting_user_confirm') {
-        message = 
-          `🛠️ เจ้าหน้าที่แจ้งแก้ไขงานเรียบร้อยแล้ว!${staffName}\n\n` +
-          `🎫 Ticket: ${ticket.ticketId}\n` +
-          `📝 ปัญหา: ${ticket.issueSummary}\n\n` +
-          `✅ วิธีแก้: ${resolutionComment}\n\n` +
-          `กรุณายืนยันว่าปัญหาได้รับการแก้ไขแล้วหรือไม่ครับ? 👇`;
+    if (status === 'in_progress') {
+      message = 
+        `✅ IT ได้รับเรื่องแล้ว!${staffLabel}\n\n` +
+        `🎫 Ticket: ${ticket.ticketId}\n` +
+        `📝 ปัญหา: ${ticket.issueSummary}\n\n` +
+        `สถานะ: กำลังดำเนินการ 🔧\n` +
+        `เจ้าหน้าที่กำลังตรวจสอบและแก้ไขปัญหาให้คุณครับ`;
+      lineMessages.push({ type: 'text', text: message });
+    } else if (status === 'waiting_user_confirm') {
+      message = 
+        `🛠️ เจ้าหน้าที่แจ้งแก้ไขงานเรียบร้อยแล้ว!${staffLabel}\n\n` +
+        `🎫 Ticket: ${ticket.ticketId}\n` +
+        `📝 ปัญหา: ${ticket.issueSummary}\n\n` +
+        `✅ วิธีแก้: ${resolutionComment || 'ดำเนินการแก้ไขเรียบร้อย'}\n\n` +
+        `กรุณายืนยันว่าปัญหาได้รับการแก้ไขแล้วหรือไม่ครับ? 👇`;
+      
+      const quickReply = {
+        items: [
+          { type: 'action', action: { type: 'message', label: '✅ ใช่ แก้ไขแล้ว', text: `ยืนยันปิดเคส ${ticket.ticketId}` } },
+          { type: 'action', action: { type: 'message', label: '❌ ยังพบปัญหาอยู่', text: `เคส ${ticket.ticketId} ยังเสียอยู่` } }
+        ]
+      };
+      lineMessages.push({ type: 'text', text: message, quickReply } as any);
+    } else if (status === 'resolved') {
+      message = 
+        `🎉 เคสของคุณได้รับการแก้ไขเรียบร้อยแล้ว!${staffLabel}\n\n` +
+        `🎫 Ticket: ${ticket.ticketId}\n` +
+        `📝 ปัญหา: ${ticket.issueSummary}\n\n` +
+        `✅ วิธีแก้ไข: ${resolutionComment || 'ดำเนินการแก้ไขเรียบร้อย'}\n\n` +
+        `สถานะ: สำเร็จ ✨`;
+      lineMessages.push({ type: 'text', text: message });
+    }
 
-        await messagingService.pushTextWithQuickReply(
-          user.lineUserId,
-          message,
-          [
-            { label: '✅ ใช่ แก้ไขแล้ว', text: `ยืนยันปิดเคส ${ticket.ticketId}` },
-            { label: '❌ ยังพบปัญหาอยู่', text: `เคส ${ticket.ticketId} ยังเสียอยู่` }
-          ]
-        );
-        return res.status(200).json({ success: true, data: ticket });
-      } else if (status === 'resolved') {
-        message = 
-          `🎉 เคสของคุณได้รับการแก้ไขเรียบร้อยแล้ว!${staffName}\n\n` +
-          `🎫 Ticket: ${ticket.ticketId}\n` +
-          `📝 ปัญหา: ${ticket.issueSummary}\n\n` +
-          `✅ วิธีแก้ไข: ${resolutionComment}\n\n` +
-          `สถานะ: สำเร็จ ✨\n\n` +
-          `─────────────────\n` +
-          `หากมีปัญหาอื่น กดปุ่มด้านล่างเพื่อเริ่มสนทนาใหม่ได้เลยครับ 👇`;
-      }
+    // เพิ่มรูปภาพหรือไฟล์ PDF ลงในชุดข้อความ LINE
+    if (attachments.length > 0) {
+      attachments.forEach(att => {
+        if (lineMessages.length < 5) {
+          if (att.type === 'image') {
+            lineMessages.push({
+              type: 'image',
+              originalContentUrl: att.url,
+              previewImageUrl: att.url
+            });
+          } else if (att.type === 'file') {
+            lineMessages.push({
+              type: 'file',
+              fileName: att.filename,
+              fileSize: att.size || 1000,
+              originalContentUrl: att.url
+            } as any);
+          }
+        }
+      });
+    }
 
-      if (message) {
-        await messagingService.pushTextWithQuickReply(
-          user.lineUserId,
-          message,
-          [{ label: '🚀 เริ่มสนทนาใหม่', text: '/start' }]
-        );
+    // ย้าย QuickReply ไปไว้ที่ข้อความสุดท้ายเสมอ และตรวจสอบประเภทที่รองรับ
+    if (lineMessages.length > 0) {
+      const msgWithQR = lineMessages.find(m => m.quickReply);
+      if (msgWithQR) {
+        const qr = msgWithQR.quickReply;
+        delete msgWithQR.quickReply;
+        
+        const lastMsg = lineMessages[lineMessages.length - 1];
+        // ประเภทที่รองรับ Quick Reply: text, image, video, audio, location, template, flex
+        const supportedTypes = ['text', 'image', 'video', 'audio', 'location', 'template', 'flex'];
+        
+        if (supportedTypes.includes(lastMsg.type)) {
+          lastMsg.quickReply = qr;
+        } else {
+          // ถ้าใบสุดท้ายไม่รองรับ (เช่น file/pdf) ให้เพิ่มข้อความ text สั้นๆ ตบท้ายเพื่อถือปุ่มแทน
+          lineMessages.push({
+            type: 'text',
+            text: 'กรุณายืนยันผลการแก้ไขด้านบนครับ 👇',
+            quickReply: qr
+          } as any);
+        }
       }
     }
 
-    res.json({
-      success: true,
-      data: ticket
-    });
+    if (lineMessages.length > 0) {
+      logger.info(`Sending ${lineMessages.length} messages to user ${user.lineUserId}:`, JSON.stringify(lineMessages, null, 2));
+      await messagingService.pushMultipleMessages(user.lineUserId, lineMessages);
+    }
+
+    res.json({ success: true, data: ticket });
   } catch (error) {
     logger.error('Error updating ticket status:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to update ticket status'
-    });
+    res.status(500).json({ success: false, error: 'Failed to update ticket status' });
   }
 });
 

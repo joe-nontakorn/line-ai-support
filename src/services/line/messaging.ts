@@ -1,11 +1,12 @@
-import { Client, TextMessage, MessageAPIResponseBase } from '@line/bot-sdk';
+// messaging.ts
+import { Client, TextMessage, MessageAPIResponseBase, Message, ImageMessage } from '@line/bot-sdk';
 import { QuickReplyItem } from './types.js';
 import { chunkText, truncateText, fetchWithTimeout } from './utils.js';
 import { LOADING_SECONDS } from './constants.js';
 import { logger } from '../../utils/logger.js';
 
 export class MessagingService {
-  constructor(private client: Client) {}
+  constructor(private client: Client) { }
 
   async replyText(
     replyToken: string,
@@ -109,6 +110,28 @@ export class MessagingService {
         logger.error(`⚠️ [LINE Push API] ขัดข้อง: โควต้าข้อความ Push รายเดือนเต็ม หรือถูกจำกัด Rate Limit (429) - ไม่สามารถส่งพร้อม QuickReply ไปที่ ${chatId} ได้`);
       } else {
         logger.error('Error pushing message with quick reply:', error.message || error);
+      }
+    }
+  }
+
+  async pushMultipleMessages(chatId: string, messages: Message[]): Promise<void> {
+    try {
+      if (messages.length === 0) return;
+      // LINE allows up to 5 messages per push
+      const messageChunks = [];
+      for (let i = 0; i < messages.length; i += 5) {
+        messageChunks.push(messages.slice(i, i + 5));
+      }
+
+      for (const chunk of messageChunks) {
+        await this.client.pushMessage(chatId, chunk);
+      }
+    } catch (error: any) {
+      if (error.statusCode === 429 || (error.response && error.response.status === 429)) {
+        logger.error(`⚠️ [LINE Push API] ขัดข้อง: โควต้าข้อความ Push รายเดือนเต็ม หรือถูกจำกัด Rate Limit (429) - ไม่สามารถส่งไปที่ ${chatId} ได้`);
+      } else {
+        logger.error('Error pushing multiple messages to chat:', error.message || error);
+        throw error;
       }
     }
   }

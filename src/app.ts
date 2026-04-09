@@ -8,6 +8,7 @@ import { lineClient } from './services/line/client.js';
 import apiRoutes from './routes/api.js';
 import cors from 'cors';
 import { logger } from './utils/logger.js';
+import { ensureUploadDir, getUploadDir } from './utils/storage.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3002', 10);
@@ -117,6 +118,9 @@ app.get('/', (req: Request, res: Response) => {
 // API Routes
 app.use('/api', apiRoutes);
 
+// Static files (Uploads)
+app.use('/uploads', express.static(getUploadDir()));
+
 
 
 // Error handling middleware
@@ -134,6 +138,7 @@ import { startTicketAutoCloseWorker } from './services/ticketAutoClose.js';
 
 // Start server
 app.listen(PORT, '0.0.0.0', () => {
+  ensureUploadDir();
   logger.info(`🚀 Server is running on port ${PORT}`);
   logger.info(`📍 Webhook URL: http://0.0.0.0:${PORT}/webhook`);
   logger.info(`📊 API URL: http://0.0.0.0:${PORT}/api`);
