@@ -240,7 +240,61 @@ export async function escalateToSupport(
               if (isPrinter) {
                 assets = assets.filter((a: any) => a.type_name === 'Printer');
 
-                // Smart Filter: ดักจับข้อมูล "ชั้น" และ "ขาวดำ/สี" จากข้อความสรุปปัญหา
+                // 🧠 Relevance Scoring: วิเคราะห์ Brand, Model, Description, Location
+                // เพื่อหาเครื่องที่ตรงกับปัญหาของ user มากที่สุด
+                const issueWords = summaryLower
+                  .replace(/[^\u0E00-\u0E7Fa-z0-9\s]/gi, ' ') // ลบอักขระพิเศษ
+                  .split(/\s+/)
+                  .filter(w => w.length >= 2)
+                  // กรองคำทั่วไปที่ไม่ควรใช้ match (stop words)
+                  .filter(w => ![
+                    'ปริ้น', 'printer', 'เครื่อง', 'เครื่องพิมพ์', 'พิมพ์', 'ไม่', 'ได้', 'ไม่ได้',
+                    'ออก', 'ไม่ออก', 'มี', 'ปัญหา', 'แก้', 'ไข', 'แก้ไข', 'ช่วย', 'ครับ', 'ค่ะ',
+                    'ที่', 'ของ', 'และ', 'หรือ', 'กับ', 'ใน', 'จะ', 'ให้', 'เป็น', 'อยู่',
+                    'ไฟ', 'สี', 'แดง', 'เขียว', 'เหลือง', 'ส้ม', 'กะพริบ', 'ติด', 'ดับ',
+                    'กระดาษ', 'หมึก', 'ติด', 'จาม', 'error', 'ทำงาน', 'ใช้', 'งาน',
+                    'รุ่น', 'model', 'brand', 'ยี่ห้อ', 'เครื่องนี้',
+                  ].includes(w));
+
+                if (issueWords.length > 0) {
+                  // คำนวณคะแนน relevance ของแต่ละ asset
+                  const scoredAssets = assets.map((a: any) => {
+                    const brand = (a.brand || '').toLowerCase();
+                    const model = (a.model || '').toLowerCase().replace(/\s+/g, ''); // "P 502" → "p502"
+                    const desc = (a.description || '').toLowerCase();
+                    const loc = (a.location_name || '').toLowerCase();
+                    const searchable = `${brand} ${model} ${a.model || ''} ${desc} ${loc}`.toLowerCase();
+
+                    let score = 0;
+                    for (const word of issueWords) {
+                      const wordNoSpace = word.replace(/\s+/g, '');
+                      // Brand match (น้ำหนัก 3)
+                      if (brand.includes(word)) score += 3;
+                      // Model match — เทียบทั้งแบบมี space และไม่มี (น้ำหนัก 5)
+                      if (model.includes(wordNoSpace) || (a.model || '').toLowerCase().includes(word)) score += 5;
+                      // Description match — เช่น "บัญชี", "IDC", "ACC" (น้ำหนัก 4)
+                      if (desc.includes(word)) score += 4;
+                      // Location match — เช่น "7f", "office" (น้ำหนัก 2)
+                      if (loc.includes(word)) score += 2;
+                    }
+
+                    return { asset: a, score };
+                  });
+
+                  // เรียงตามคะแนนจากมากไปน้อย
+                  scoredAssets.sort((a, b) => b.score - a.score);
+
+                  const maxScore = scoredAssets[0]?.score || 0;
+                  if (maxScore > 0) {
+                    // เอาเฉพาะ asset ที่มีคะแนนสูงสุด (หรือใกล้เคียง ±30%)
+                    const threshold = Math.max(maxScore * 0.7, 1);
+                    assets = scoredAssets
+                      .filter(s => s.score >= threshold)
+                      .map(s => s.asset);
+                  }
+                }
+
+                // กรองเพิ่มเติมด้วยชั้น (ถ้า user ระบุ)
                 const floorMatch = summaryLower.match(/ชั้น\s*(\d+)/i) || summaryLower.match(/(\d+)\s*f/i);
                 if (floorMatch) {
                   const floorNum = floorMatch[1] || floorMatch[2];
@@ -250,12 +304,12 @@ export async function escalateToSupport(
                     return loc.includes(`${floorNum}f`) || loc.includes(`ชั้น ${floorNum}`) || loc.includes(`ชั้น${floorNum}`) ||
                       desc.includes(`${floorNum}f`) || desc.includes(`ชั้น ${floorNum}`) || desc.includes(`ชั้น${floorNum}`);
                   });
-                  // กรองแล้วยังเหลือข้อมูลให้ใช้ตัวกรองนี้ (ถ้ากรองแล้วหายหมดให้ใช้ชุดเดิม)
                   if (floorFiltered.length > 0) assets = floorFiltered;
                 }
 
+                // กรองขาวดำ/สี (ต้องระบุชัดเจน)
                 const isBW = summaryLower.includes('ขาวดำ') || summaryLower.includes('ขาว-ดำ');
-                const isColor = summaryLower.includes('สี') && !isBW;
+                const isColor = /(ปริ้น|เครื่อง|พิมพ์|printer)\s*สี/i.test(summaryLower) && !isBW;
 
                 if (isBW) {
                   const bwFiltered = assets.filter((a: any) => {
