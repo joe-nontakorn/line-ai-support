@@ -11,6 +11,7 @@ export const SUPPORT_COMMANDS = new Set([
   '/help',
   'ช่วยเหลือ',
   'แก้ได้แล้ว',
+  'ให้คะแนนคำตอบ',
 ]);
 
 export const GREETING_KEYWORDS = [

@@ -77,6 +77,16 @@ export class LineService {
         return supportHandlers.escalateToSupport(replyToken, userId, (message as TextEventMessage).text, waitingEscalationConv, this.messaging, this.conversation);
       }
 
+      // 🔧 สถานะ waiting_hardware_confirm: ถ้า user พิมพ์ข้อความเอง (ไม่ใช่กดปุ่ม) ให้ส่งเข้า escalation
+      const waitingHwConv = await this.conversation.getLatestConversationByStatuses(userId, ['waiting_hardware_confirm']);
+      if (waitingHwConv && message.type === 'text') {
+        const hwText = (message as TextEventMessage).text;
+        // ปล่อยให้ข้อความจากปุ่ม quick reply ไป handleTextMessage ตามปกติ
+        if (!hwText.startsWith('ใช่ เกี่ยวกับเครื่อง') && hwText !== 'ไม่ใช่เครื่องนี้') {
+          return supportHandlers.escalateToSupport(replyToken, userId, hwText, waitingHwConv, this.messaging, this.conversation);
+        }
+      }
+
       // 🚨 Main Message Type Routing
       switch (message.type) {
         case 'text': {

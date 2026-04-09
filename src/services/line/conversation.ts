@@ -46,14 +46,14 @@ export class ConversationService {
   async closeAllActiveConversations(userId: string): Promise<void> {
     await Conversation.deleteMany({
       lineUserId: userId,
-      status: { $in: ['active', 'waiting_escalation_issue', 'waiting_rating', 'waiting_hardware_confirm'] },
+      status: { $in: ['active', 'waiting_escalation_issue', 'waiting_rating', 'waiting_hardware_confirm', 'waiting_troubleshoot_confirm'] },
       $or: [{ messages: { $size: 0 } }, { messages: { $exists: false } }]
     });
 
     await Conversation.updateMany(
       {
         lineUserId: userId,
-        status: { $in: ['active', 'waiting_escalation_issue', 'waiting_rating', 'waiting_hardware_confirm'] },
+        status: { $in: ['active', 'waiting_escalation_issue', 'waiting_rating', 'waiting_hardware_confirm', 'waiting_troubleshoot_confirm'] },
       },
       {
         $set: {
