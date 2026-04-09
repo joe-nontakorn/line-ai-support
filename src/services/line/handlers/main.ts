@@ -202,9 +202,11 @@ export async function handleTextMessage(
     );
   }
 
-  if (text === 'แก้ได้แล้ว') {
-    const activeConv = await conversationService.getLatestConversationByStatuses(userId, ['active']);
+  if (text === 'แก้ได้แล้ว' || text === 'ให้คะแนนคำตอบ') {
+    const activeConv = await conversationService.getLatestConversationByStatuses(userId, ['active', 'waiting_troubleshoot_confirm', 'waiting_hardware_confirm']);
     if (activeConv) {
+      activeConv.resolved = true;
+      await activeConv.save();
       return promptForRating(replyToken, userId, activeConv, messaging, conversationService);
     }
   }
@@ -212,15 +214,6 @@ export async function handleTextMessage(
   if (text === 'ยังแก้ไม่ได้') {
     const activeConv = await conversationService.getLatestConversationByStatuses(userId, ['active', 'waiting_troubleshoot_confirm', 'waiting_hardware_confirm']);
     return escalateToSupport(replyToken, userId, undefined, activeConv, messaging, conversationService);
-  }
-
-  if (text === 'แก้ได้แล้ว') {
-    const activeConv = await conversationService.getLatestConversationByStatuses(userId, ['active', 'waiting_troubleshoot_confirm', 'waiting_hardware_confirm']);
-    if (activeConv) {
-      activeConv.resolved = true;
-      await activeConv.save();
-      return promptForRating(replyToken, userId, activeConv, messaging, conversationService);
-    }
   }
 
   if (text.startsWith('ใช่ เกี่ยวกับเครื่อง') || text === 'ไม่ใช่เครื่องนี้') {
@@ -289,7 +282,7 @@ export async function handleTextMessage(
     quickReplies.unshift({ label: '❌ ยังแก้ไม่ได้', text: 'ยังแก้ไม่ได้' });
   } else if (responseType === 'IT_INFO') {
     quickReplies.unshift({ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' });
-    quickReplies.unshift({ label: '📊 ให้คะแนนคำตอบ', text: 'ให้คะแนนคำตอบ' }); // Trick 'แก้ได้แล้ว' to trigger rating
+    quickReplies.unshift({ label: '📊 ให้คะแนนคำตอบ', text: 'ให้คะแนนคำตอบ' });
   } else if (responseType === 'OUT_OF_SCOPE') {
     quickReplies.unshift({ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' });
   }

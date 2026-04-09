@@ -110,15 +110,37 @@ export async function escalateToSupport(
   }
 
   // ใช้ AI สรุปปัญหาจากประวัติทั้งหมด (เพื่อให้ครอบคลุมสิ่งที่เพิ่งพิมพ์มาด้วย)
-  if (conversationToUpdate.messages.length > 0) {
+  // ⚡ สำหรับ direct escalation ที่มี user message แค่ 1 ข้อความ ใช้ข้อความ user ตรงๆ โดยไม่ต้องเรียก AI
+  const isDirectEscalation = conversationToUpdate.status === 'waiting_escalation_issue';
+  const userMessages = conversationToUpdate.messages.filter(m => m.role === 'user');
+
+  if (isDirectEscalation && userMessages.length === 1 && text) {
+    // Direct escalation: ใช้ข้อความ user ตรงๆ เพื่อความเร็ว
+    issueSummary = text.trim();
+  } else if (conversationToUpdate.messages.length > 0) {
     issueSummary = await conversationService.analyzeIssueSafe(conversationToUpdate.messages);
   } else if (conversationToUpdate.issue && conversationToUpdate.issue !== 'ไม่ระบุ') {
     issueSummary = conversationToUpdate.issue;
   }
 
-  // สำรอง: ถ้า AI ยังสรุปไม่ได้แต่มีข้อความล่าสุด ให้ใช้ข้อความนั้นไปก่อน
-  if ((issueSummary === 'ไม่ระบุ' || issueSummary === 'ไม่สามารถสรุปปัญหาได้') && text) {
-    issueSummary = text.trim();
+  // 🛡️ Fallback chain: ถ้า AI สรุปไม่ได้ (timeout / error) ให้ดึงจากแหล่งอื่น
+  if (issueSummary === 'ไม่ระบุ' || issueSummary === 'ไม่สามารถสรุปปัญหาได้') {
+    // Fallback 1: ใช้ issue ที่เคยบันทึกไว้ใน conversation (จากขั้นตอน troubleshooting ก่อนหน้า)
+    if (conversationToUpdate.issue && conversationToUpdate.issue !== 'ไม่ระบุ' && conversationToUpdate.issue !== 'ไม่สามารถสรุปปัญหาได้') {
+      issueSummary = conversationToUpdate.issue;
+    }
+    // Fallback 2: ใช้ข้อความล่าสุดที่ user พิมพ์มา
+    else if (text) {
+      issueSummary = text.trim();
+    }
+    // Fallback 3: ดึงจากข้อความ user ในประวัติสนทนา (เอาข้อความแรกที่ user แจ้งปัญหา)
+    else if (userMessages.length > 0) {
+      issueSummary = userMessages
+        .map(m => m.content)
+        .filter(c => c.length > 3 && !c.startsWith('ใช่') && !c.startsWith('ไม่'))
+        .slice(0, 2)
+        .join(' | ') || userMessages[0].content;
+    }
   }
 
   // ❌ ไม่ส่ง admin ถ้าไม่มีการระบุปัญหา
@@ -149,7 +171,7 @@ export async function escalateToSupport(
     );
   }
   const isSkip = text?.trim() === 'ข้าม';
-  if (!isSkip && conversationToUpdate.status !== 'waiting_hardware_confirm' && conversationToUpdate.status !== 'waiting_troubleshoot_confirm') {
+  if (!isSkip && !isDirectEscalation && conversationToUpdate.status !== 'waiting_hardware_confirm' && conversationToUpdate.status !== 'waiting_troubleshoot_confirm') {
     // 🔍 ป้องกัน Loop โดยเช็กจำนวนข้อความในสถานะนี้ (ถ้าถามไปแล้ว 2 ครั้งยังไม่เคลียร์ ก็ให้ผ่านไป)
     const userMessagesInState = conversationToUpdate.messages.filter(m => m.role === 'user').length;
 
@@ -179,7 +201,7 @@ export async function escalateToSupport(
   }
 
   // 🔎 แจ้งเรื่องอุปกรณ์ฮาร์ดแวร์ (ยกเว้นรอยืนยันฮาร์ดแวร์เดิม หรือกำลังรอคอนเฟิร์มวิธีแก้ปัญหา หรือผู้ใช้กดข้าม)
-  if (!isSkip && conversationToUpdate.status !== 'waiting_hardware_confirm' && conversationToUpdate.status !== 'waiting_troubleshoot_confirm') {
+  if (!isSkip && !isDirectEscalation && conversationToUpdate.status !== 'waiting_hardware_confirm' && conversationToUpdate.status !== 'waiting_troubleshoot_confirm') {
     const printerKeywords = ['ปริ้น', 'printer', 'เครื่องพิมพ์', 'สแกน', 'scanner', 'หมึก', 'หมึกพิมพ์'];
     const computerKeywords = ['เครื่องเสีย', 'เปิดไม่ติด', 'จอดำ', 'จอฟ้า', 'คอม', 'โน๊ตบุ๊ค', 'laptop', 'desktop', 'พีซี', 'pc'];
     const otherHwKeywords = ['อุปกรณ์', 'จอ', 'เมาส์', 'คีย์บอร์ด', 'ฮาร์ดแวร์', 'พัง', 'usb', 'monitor', 'keyboard', 'mouse'];
@@ -328,7 +350,7 @@ export async function escalateToSupport(
   // 3. ปัญหามีความชัดเจนมากพอ (เช่น ระบุชั้น/สถานที่ หรือ สรุปปัญหาได้ยาวพอ)
   const isClearEnough = issueSummary.length > 25 || issueSummary.includes('ชั้น') || issueSummary.includes('ที่');
 
-  if (!isSkip && !isClearEnough && conversationToUpdate!.status !== 'waiting_troubleshoot_confirm') {
+  if (!isSkip && !isDirectEscalation && !isClearEnough && conversationToUpdate!.status !== 'waiting_troubleshoot_confirm') {
     const advice = await geminiService.getTroubleshootingAdvice(issueSummary);
 
     conversationToUpdate.status = 'waiting_troubleshoot_confirm';
