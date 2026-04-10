@@ -130,7 +130,9 @@ export class MessagingService {
       if (error.statusCode === 429 || (error.response && error.response.status === 429)) {
         logger.error(`⚠️ [LINE Push API] ขัดข้อง: โควต้าข้อความ Push รายเดือนเต็ม หรือถูกจำกัด Rate Limit (429) - ไม่สามารถส่งไปที่ ${chatId} ได้`);
       } else {
+        const details = error.originalError?.response?.data || error.response?.data || '';
         logger.error('Error pushing multiple messages to chat:', error.message || error);
+        if (details) logger.error('LINE API error details:', JSON.stringify(details));
         throw error;
       }
     }

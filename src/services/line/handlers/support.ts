@@ -153,8 +153,8 @@ export async function escalateToSupport(
     );
   }
 
-  // ❌ ตรวจสอบกับ AI ว่าเป็นปัญหา IT จริงหรือไม่
-  const isItRelated = await checkITRelatedWithAI(issueSummary, conversationToUpdate);
+  // ❌ ตรวจสอบว่าเป็นปัญหา IT จริงหรือไม่ (ใช้ผลจาก analyzeIssue ที่มีอยู่แล้ว — ไม่เรียก AI ซ้ำ)
+  const isItRelated = checkITRelatedFromSummary(issueSummary, conversationToUpdate);
   if (!isItRelated) {
     // ปิดการสนทนาแล้วแจ้งผู้ใช้
     conversationToUpdate.status = 'closed';
@@ -518,8 +518,9 @@ export async function escalateToSupport(
  * ตรวจสอบว่าปัญหาเกี่ยวข้องกับ IT หรือไม่
  * ใช้ Gemini AI วิเคราะห์ + pattern matching เป็น fallback
  */
-async function checkITRelatedWithAI(issueSummary: string, conversation: ConversationDoc): Promise<boolean> {
-  // Step 1: ตรวจสอบ pattern ที่ชัดเจนว่าไม่ใช่ IT (fast path)
+function checkITRelatedFromSummary(issueSummary: string, conversation: ConversationDoc): boolean {
+  // ⚡ ใช้ pattern matching กับ issueSummary ที่ได้จาก analyzeIssue แล้ว (ไม่เรียก AI ซ้ำ)
+  // เพราะ analyzeIssue จะตอบ NON_IT_ISSUE ถ้าไม่ใช่ปัญหา IT อยู่แล้ว
   const nonItPatterns = [
     'NON_IT',
     'OUT_OF_SCOPE',
@@ -530,11 +531,12 @@ async function checkITRelatedWithAI(issueSummary: string, conversation: Conversa
 
   for (const pattern of nonItPatterns) {
     if (issueSummary.toUpperCase().includes(pattern.toUpperCase())) {
+      logger.info(`[IT-Filter] Rejected non-IT issue: "${issueSummary}"`);
       return false;
     }
   }
 
-  // Step 2: ตรวจสอบจากประวัติสนทนา ถ้า AI ตอบว่าไม่เกี่ยวกับ IT ทุกครั้ง
+  // ตรวจสอบจากประวัติสนทนา ถ้า AI ตอบว่าไม่เกี่ยวกับ IT ทุกครั้ง
   const assistantMessages = conversation.messages.filter(m => m.role === 'assistant');
   if (assistantMessages.length > 0) {
     const outOfScopeCount = assistantMessages.filter(m =>
@@ -545,26 +547,10 @@ async function checkITRelatedWithAI(issueSummary: string, conversation: Conversa
     ).length;
 
     if (outOfScopeCount > 0 && outOfScopeCount === assistantMessages.length) {
+      logger.info(`[IT-Filter] Rejected based on conversation history: "${issueSummary}"`);
       return false;
     }
   }
 
-  // Step 3: ส่งให้ Gemini วิเคราะห์ว่าเป็นปัญหา IT จริงหรือไม่
-  try {
-    const aiResult = await geminiService.analyzeIssue(
-      [{ role: 'user', content: issueSummary }]
-    );
-
-    // ถ้า AI บอกว่า NON_IT_ISSUE → ไม่ใช่ IT
-    if (aiResult.toUpperCase().includes('NON_IT')) {
-      logger.info(`[IT-Filter] Rejected non-IT issue: "${issueSummary}" → AI: "${aiResult}"`);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    // ถ้า AI ล้มเหลว ให้ผ่านไปก่อน (fail-open) เพื่อไม่ให้พลาดเคสจริง
-    logger.error('[IT-Filter] AI check failed, allowing escalation:', error);
-    return true;
-  }
+  return true;
 }

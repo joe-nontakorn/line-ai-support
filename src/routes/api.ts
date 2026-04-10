@@ -437,10 +437,43 @@ router.put('/tickets/:ticketId/status', upload.array('files', 5), async (req: Re
             });
           } else if (att.type === 'file') {
             lineMessages.push({
-              type: 'file',
-              fileName: att.filename,
-              fileSize: att.size || 1000,
-              originalContentUrl: att.url
+              type: 'flex',
+              altText: `ไฟล์แนบ: ${att.filename}`,
+              contents: {
+                type: 'bubble',
+                body: {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'md',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: att.filename,
+                      weight: 'bold',
+                      size: 'md',
+                      wrap: true
+                    },
+                    {
+                      type: 'text',
+                      text: att.size ? `${(att.size / (1024 * 1024)).toFixed(2)} MB` : '',
+                      size: 'xs',
+                      color: '#888888'
+                    },
+                    {
+                      type: 'button',
+                      action: {
+                        type: 'uri',
+                        label: 'ดาวน์โหลด / เปิดไฟล์',
+                        uri: att.url
+                      },
+                      style: 'primary',
+                      height: 'sm',
+                      color: '#007bff',
+                      margin: 'md'
+                    }
+                  ]
+                }
+              }
             } as any);
           }
         }
