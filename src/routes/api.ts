@@ -69,6 +69,36 @@ router.get('/stats', async (_req: Request, res: Response) => {
       Conversation.countDocuments({ createdAt: { $gte: weekAgo } })
     ]);
 
+    // Average Resolution Time (for resolved tickets)
+    const resolutionStats = await Ticket.aggregate([
+      { $match: { resolvedAt: { $ne: null }, reportedAt: { $ne: null } } },
+      {
+        $project: {
+          duration: { $subtract: ['$resolvedAt', '$reportedAt'] }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          avgDuration: { $avg: '$duration' }
+        }
+      }
+    ]);
+
+    const avgResolutionTimeMs = resolutionStats.length > 0 ? resolutionStats[0].avgDuration : 0;
+    const avgResolutionTimeHours = (avgResolutionTimeMs / (1000 * 60 * 60)).toFixed(1);
+
+    // Department Stats
+    const departmentStats = await Ticket.aggregate([
+      {
+        $group: {
+          _id: '$department',
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { count: -1 } }
+    ]);
+
     res.json({
       success: true,
       data: {
@@ -81,7 +111,9 @@ router.get('/stats', async (_req: Request, res: Response) => {
         averageRating: avgRating.toFixed(2),
         totalRatings,
         conversationsToday,
-        conversationsThisWeek
+        conversationsThisWeek,
+        averageResolutionTime: avgResolutionTimeHours,
+        departmentStats: departmentStats.map(d => ({ department: d._id || 'ไม่ระบุ', count: d.count }))
       }
     });
   } catch (error) {
@@ -274,6 +306,93 @@ router.get('/ratings', async (_req: Request, res: Response) => {
   } catch (error) {
     logger.error('Error fetching rating stats:', error);
     res.status(500).json({ success: false, error: 'Failed to fetch rating stats' });
+  }
+});
+
+/**
+ * GET /api/trends - ดึงแนวโน้มเคสรายวัน (7 วันย้อนหลัง)
+ */
+router.get('/trends', async (_req: Request, res: Response) => {
+  try {
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+    sevenDaysAgo.setHours(0, 0, 0, 0);
+
+    const trends = await Ticket.aggregate([
+      { $match: { reportedAt: { $gte: sevenDaysAgo } } },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$reportedAt" } },
+          count: { $sum: 1 },
+          resolved: { $sum: { $cond: [{ $eq: ["$status", "resolved"] }, 1, 0] } }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    // Fill missing days
+    const result = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(sevenDaysAgo);
+      d.setDate(d.getDate() + i);
+      const dateStr = d.toISOString().split('T')[0];
+      const found = trends.find(t => t._id === dateStr);
+      result.push({
+        date: dateStr,
+        count: found ? found.count : 0,
+        resolved: found ? found.resolved : 0
+      });
+    }
+
+    res.json({ success: true, data: result });
+  } catch (error) {
+    logger.error('Error fetching trends:', error);
+    res.status(500).json({ success: false, error: 'Failed' });
+  }
+});
+
+/**
+ * GET /api/activity - กิจกรรมล่าสุด
+ */
+router.get('/activity', async (_req: Request, res: Response) => {
+  try {
+    const tickets = await Ticket.find()
+      .sort({ reportedAt: -1 })
+      .limit(10)
+      .lean();
+
+    const activities = [];
+    for (const t of tickets) {
+      activities.push({
+        id: t.ticketId,
+        user: t.name,
+        issue: t.issueSummary.split('\n')[0],
+        status: t.status,
+        time: t.reportedAt,
+        type: 'new_ticket'
+      });
+
+      // Add status changes from history
+      if (t.statusHistory) {
+        for (const h of t.statusHistory) {
+          activities.push({
+            id: t.ticketId,
+            user: h.changedBy || 'System',
+            status: h.status,
+            time: h.changedAt,
+            type: 'status_change',
+            targetUser: t.name
+          });
+        }
+      }
+    }
+
+    activities.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+
+    res.json({ success: true, data: activities.slice(0, 15) });
+  } catch (error) {
+    logger.error('Error fetching activity:', error);
+    res.status(500).json({ success: false, error: 'Failed' });
   }
 });
 
