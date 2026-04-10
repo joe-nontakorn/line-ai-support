@@ -83,12 +83,13 @@ export async function handleTextMessage(
       if (conv) {
         conv.resolved = true;
         conv.status = 'waiting_rating';
+        conv.issue = ticket.issueSummary.split('\n')[0]; // Link rating to the actual issue summary
         await conv.save();
       } else {
         // 🚨 กรณีไม่พบเซสชั่นเดิม (เช่น หมดอายุ) ให้สร้างใหม่เพื่อใช้รับคะแนน (Rating) เสมอ
         conv = await conversationService.createNewConversation(userId, 'waiting_rating');
         conv.resolved = true;
-        conv.issue = `ปิดเคสสำเร็จ: ${ticketId}`; 
+        conv.issue = ticket.issueSummary.split('\n')[0]; // Link rating to the actual issue summary
         await conv.save();
       }
 
