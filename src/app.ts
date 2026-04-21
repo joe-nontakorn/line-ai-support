@@ -135,6 +135,7 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 
 
 import { startTicketAutoCloseWorker } from './services/ticketAutoClose.js';
+import { startConversationDailyReset } from './services/conversationDailyReset.js';
 
 // Start server
 app.listen(PORT, '0.0.0.0', () => {
@@ -147,6 +148,9 @@ app.listen(PORT, '0.0.0.0', () => {
   startTicketAutoCloseWorker().catch(err => {
     logger.error('Failed to start Ticket Auto-Close Worker:', err);
   });
+
+  // Start daily conversation reset (23:59 Bangkok time)
+  startConversationDailyReset();
 });
 
 export default app;

@@ -80,10 +80,16 @@ export function isValidDepartment(value: string): boolean {
   return trimmed.length >= 2 && trimmed.length <= 120;
 }
 
-export async function streamToBuffer(streamLike: AsyncIterable<Buffer>): Promise<Buffer> {
+export async function streamToBuffer(streamLike: AsyncIterable<Buffer>, maxBytes?: number): Promise<Buffer> {
   const chunks: Buffer[] = [];
+  let totalSize = 0;
   for await (const chunk of streamLike) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalSize += buf.length;
+    if (maxBytes && totalSize > maxBytes) {
+      throw new Error(`File size exceeds limit of ${maxBytes} bytes`);
+    }
+    chunks.push(buf);
   }
   return Buffer.concat(chunks);
 }
