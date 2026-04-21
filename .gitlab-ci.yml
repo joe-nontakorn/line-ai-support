@@ -10,6 +10,7 @@ run-tests:
     - linebot
   variables:
     GEMINI_API_KEY: "dummy-key-for-test"
+    GEMINI_MODEL: "gemini-3.1-flash-lite-preview"
   script:
     - bun install
     - bun test tests/

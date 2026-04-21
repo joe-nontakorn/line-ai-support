@@ -37,7 +37,7 @@ if (!GEMINI_API_KEY) {
 
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
-const MODEL_NAME = process.env.GEMINI_MODEL!;
+const MODEL_NAME = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview';
 logger.info(`[Gemini] Using model: ${MODEL_NAME}`);
 
 const safetySettings = [
