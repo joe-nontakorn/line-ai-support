@@ -25,7 +25,7 @@ export async function handleRegistration(
       '- ระบบนี้ออกแบบมาเพื่อตรวจสอบสิทธิ์ผ่านฐานข้อมูลพนักงานบริษัท\n' +
       '- การสนทนาจะถูกบันทึกเพื่อนำไปปรับปรุงระบบและให้บริการในภายหลัง\n' +
       '- รบกวนสอบถามเฉพาะปัญหาที่เกี่ยวข้องกับงานด้าน IT Support เท่านั้น\n\n' +
-      'กรุณาลงทะเบียนเพื่อเริ่มใช้งาน โดยพิมพ์ **รหัสพนักงาน** หรือ **Email** อย่างใดอย่างหนึ่ง เพื่อให้ระบบตรวจสอบครับ:'
+      'กรุณาลงทะเบียนเพื่อเริ่มใช้งาน โดยใส่รหัสพนักงาน เช่น **1234** หรือ **Email** อย่างใดอย่างหนึ่ง เพื่อให้ระบบตรวจสอบครับ:'
     );
   }
 
@@ -148,14 +148,14 @@ export async function handleRegistration(
 
     // 📡 Update backend API (Partial Update)
     const updateResult = await registration.updateEmployeePhone(
-      state.tempPayload.employeeId, 
-      phone, 
+      state.tempPayload.employeeId,
+      phone,
       state.tempPayload.email
     );
     if (updateResult) {
-       logger.info(`✅ Successfully updated phone for employee ${state.tempPayload.employeeId} in external database`);
+      logger.info(`✅ Successfully updated phone for employee ${state.tempPayload.employeeId} in external database`);
     } else {
-       logger.error(`❌ Failed to update phone for employee ${state.tempPayload.employeeId} in external database (Check API logs)`);
+      logger.error(`❌ Failed to update phone for employee ${state.tempPayload.employeeId} in external database (Check API logs)`);
     }
 
     // 💾 Save to local DB (Always save local even if external fails so user can still chat)
