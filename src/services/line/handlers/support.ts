@@ -478,6 +478,9 @@ export async function escalateToSupport(
   const ticketId = `IT-${randomStr}`;
 
   // บันทึกข้อมูลลง MongoDB ตามรูปแบบ
+  // 🏷️ เพิ่มการจัดหมวดหมู่โดย AI
+  const { category, subCategory } = await geminiService.categorizeIssue(issueSummary);
+
   const newTicket = new Ticket({
     ticketId: ticketId,
     name: user!.name,
@@ -485,7 +488,9 @@ export async function escalateToSupport(
     department: user!.department,
     email: user!.email || 'ไม่ระบุ',
     phone: user!.phone || 'ไม่ระบุ',
-    issueSummary: issueSummary + hardwareDetails
+    issueSummary: issueSummary + hardwareDetails,
+    category: category,
+    subCategory: subCategory
   });
   await newTicket.save();
 
@@ -498,6 +503,7 @@ export async function escalateToSupport(
       `📁 แผนก: ${user!.department}\n` +
       `📧 Email: ${user!.email || 'ไม่ระบุ'}\n` +
       `📞 เบอร์ติดต่อ: ${user!.phone || 'ไม่ระบุ'}\n\n` +
+      `📁 หมวดหมู่: ${category} (${subCategory})\n` +
       `📝 สรุปปัญหา: ${issueSummary}${hardwareDetails}`;
 
     await messaging.pushText(adminGroupId, adminMessage);

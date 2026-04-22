@@ -25,6 +25,8 @@ export interface ITicket extends Document {
   email: string;
   phone: string;
   issueSummary: string;
+  category: string;    // หมวดหมู่หลัก (เช่น Network, Hardware, Software)
+  subCategory: string; // หมวดหมู่ย่อย (เช่น VPN, Printer, SAP)
   status: TicketStatus;
   statusHistory: IStatusHistory[];
   resolutionComment: string; // วิธีแก้ปัญหา (บังคับเมื่อ status = resolved) — สำหรับ AI วิเคราะห์
@@ -56,6 +58,8 @@ const TicketSchema: Schema = new Schema({
   email: { type: String, default: 'ไม่ระบุ' },
   phone: { type: String, default: 'ไม่ระบุ' },
   issueSummary: { type: String, required: true },
+  category: { type: String, default: 'Uncategorized' },
+  subCategory: { type: String, default: 'Other' },
   status: { 
     type: String, 
     enum: ['pending', 'in_progress', 'waiting_user_confirm', 'resolved'], 
