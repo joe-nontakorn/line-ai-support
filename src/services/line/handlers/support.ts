@@ -203,8 +203,8 @@ export async function escalateToSupport(
   // 🔎 แจ้งเรื่องอุปกรณ์ฮาร์ดแวร์ (ยกเว้นรอยืนยันฮาร์ดแวร์เดิม หรือกำลังรอคอนเฟิร์มวิธีแก้ปัญหา หรือผู้ใช้กดข้าม)
   if (!isSkip && !isDirectEscalation && conversationToUpdate.status !== 'waiting_hardware_confirm' && conversationToUpdate.status !== 'waiting_troubleshoot_confirm') {
     const printerKeywords = ['ปริ้น', 'printer', 'เครื่องพิมพ์', 'สแกน', 'scanner', 'หมึก', 'หมึกพิมพ์'];
-    const computerKeywords = ['เครื่องเสีย', 'เปิดไม่ติด', 'จอดำ', 'จอฟ้า', 'คอม', 'โน๊ตบุ๊ค', 'laptop', 'desktop', 'พีซี', 'pc'];
-    const otherHwKeywords = ['อุปกรณ์', 'จอ', 'เมาส์', 'คีย์บอร์ด', 'ฮาร์ดแวร์', 'พัง', 'usb', 'monitor', 'keyboard', 'mouse'];
+    const computerKeywords = ['เครื่องเสีย', 'เปิดไม่ติด', 'จอดำ', 'จอฟ้า', 'คอม', 'โน๊ตบุ๊ค', 'laptop', 'desktop', 'พีซี', 'pc', 'แฟลชไดรฟ์', 'flash drive', 'usb', 'ไฟล์', 'copy', 'คัดลอก'];
+    const otherHwKeywords = ['อุปกรณ์', 'จอ', 'เมาส์', 'คีย์บอร์ด', 'ฮาร์ดแวร์', 'พัง', 'monitor', 'keyboard', 'mouse'];
 
     const summaryLower = issueSummary.toLowerCase();
     const isPrinter = printerKeywords.some(kw => summaryLower.includes(kw));
@@ -223,6 +223,7 @@ export async function escalateToSupport(
         } else {
           // Personal devices (Search by employee name)
           apiUrl += `employee_name=${encodeURIComponent(user!.name)}`;
+          // ถ้าเป็นเรื่องคอม หรือเรื่องไฟล์/USB ให้กรองเอาเฉพาะคอมพิวเตอร์
           if (isComputer) useFilter = true;
         }
 
@@ -359,8 +360,8 @@ export async function escalateToSupport(
               if (assets.length === 1) {
                 const asset = assets[0];
                 const assetStr = `${asset.brand} ${asset.model} (S/N: ${asset.serial_no})`;
-                let msg = `ระบบตรวจพบว่าปัญหาอาจเกี่ยวข้องกับ ${assetStr}\nใช่เครื่องนี้หรือไม่ครับ?`;
-                if (asset.location_name) msg = `ระบบตรวจพบอุปกรณ์ที่ ${asset.location_name}: ${assetStr}\nเป็นเครื่องที่มีปัญหาใช่หรือไม่ครับ?`;
+                let msg = `ปัญหาที่แจ้งมา เกิดขึ้นกับเครื่อง **${assetStr}** ใช่ไหมครับ?`;
+                if (asset.location_name) msg = `ตรวจพบว่าคุณกำลังใช้งานเครื่อง **${assetStr}** ที่ ${asset.location_name} ใช่เครื่องที่มีปัญหาหรือไม่ครับ?`;
 
                 await conversationService.appendAssistantMessage(conversationToUpdate, msg);
 
@@ -368,8 +369,8 @@ export async function escalateToSupport(
                   replyToken,
                   msg,
                   [
-                    { label: '✅ ใช่', text: 'ใช่ เกี่ยวกับเครื่องนี้' },
-                    { label: '❌ ไม่ใช่', text: 'ไม่ใช่เครื่องนี้' }
+                    { label: '✅ ใช่ เครื่องนี้', text: 'ใช่ เกี่ยวกับเครื่องนี้' },
+                    { label: '❌ ไม่ใช่เครื่องนี้', text: 'ไม่ใช่เครื่องนี้' }
                   ]
                 );
               } else {
@@ -382,8 +383,8 @@ export async function escalateToSupport(
 
                 const listStr = assets.map((a: any, i: number) => `${i + 1}. ${getAssetDesc(a)}`).join('\n\n');
                 const promptMsg = isPrinter
-                  ? `พบเครื่องพิมพ์/อุปกรณ์ส่วนกลางในระบบดังนี้ครับ ไม่ทราบว่าเป็นเครื่องไหนและอยู่ชั้นไหนครับ?\n\n${listStr}`
-                  : `พบอุปกรณ์ของคุณในระบบหลายรายการ ปัญหาเกี่ยวข้องกับรายการไหนครับ?\n\n${listStr}`;
+                  ? `พบเครื่องพิมพ์ในระบบดังนี้ครับ ไม่ทราบว่าเป็นเครื่องไหนที่คุณกำลังใช้งานอยู่ครับ? 👇\n\n${listStr}`
+                  : `ไม่ทราบว่าปัญหาเกิดขึ้นกับอุปกรณ์เครื่องไหนครับ? รบกวนเลือกรายการด้านล่างเพื่อให้เจ้าหน้าที่ตรวจสอบได้รวดเร็วขึ้นครับ 👇\n\n${listStr}`;
 
                 await conversationService.appendAssistantMessage(conversationToUpdate, promptMsg);
 
