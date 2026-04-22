@@ -41,10 +41,7 @@ export async function handleFollow(
     return messaging.replyTextWithQuickReply(
       replyToken,
       `ยินดีต้อนรับกลับมาครับคุณ ${user.name}! มีปัญหาเรื่อง IT สอบถามเข้ามาได้เลยครับ 😊\n\n📌 สามารถแนบส่ง **รูปภาพแคปหน้าจอ** หรือ **ไฟล์ PDF/เอกสารต่าง ๆ** แจ้งปัญหาได้เลยครับ\n\nกรุณากดปุ่มเพื่อเริ่มสนทนาใหม่ 👇`,
-      [
-        { label: '👤 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' },
-        { label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' },
-      ],
+      [{ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' }],
     );
   } catch (error) {
     console.error('Error handling follow event:', error);
@@ -146,10 +143,7 @@ export async function handleTextMessage(
       return messaging.replyTextWithQuickReply(
         replyToken,
         replyMsg,
-        [
-          { label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' },
-          { label: '👤 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' }
-        ]
+        [{ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' }]
       );
     }
   }
@@ -207,10 +201,7 @@ export async function handleTextMessage(
               return messaging.replyTextWithQuickReply(
                 replyToken,
                 msgParts.join('\n\n'),
-                [
-                  { label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' },
-                  { label: '👤 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' }
-                ]
+                [{ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' }]
               );
             }
           }
@@ -327,6 +318,11 @@ export async function handleTextMessage(
     return promptForEscalationIssue(replyToken, userId, messaging, conversationService);
   }
 
+  if (text === 'ติดต่อเจ้าหน้าที่') {
+    const activeConv = await conversationService.getLatestConversationByStatuses(userId, ['active', 'waiting_troubleshoot_confirm', 'waiting_hardware_confirm']);
+    return escalateToSupport(replyToken, userId, undefined, activeConv, messaging, conversationService);
+  }
+
   // Handle generalized conversation
   let conversation = await conversationService.getActiveConversation(userId);
   if (!conversation) {
@@ -336,7 +332,31 @@ export async function handleTextMessage(
   await conversationService.appendUserMessage(conversation, text);
   await messaging.showLoadingAnimation(userId, LOADING_SECONDS);
 
-  const aiResponseRaw = await geminiService.chat(conversation.messages);
+  // 🎫 ดึงข้อมูล Ticket ของผู้ใช้งานรายนี้เพื่อส่งเป็น Context ให้ AI
+  const user = await conversationService.getUser(userId);
+  let userTicketsContext = '';
+  if (user) {
+    const userTickets = await Ticket.find({ employeeId: user.employeeId })
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .lean();
+
+    if (userTickets.length > 0) {
+      userTicketsContext = userTickets.map(t => {
+        let statusTh = 'รอดำเนินการ';
+        if (t.status === 'in_progress') statusTh = 'กำลังดำเนินการ';
+        if (t.status === 'waiting_user_confirm') statusTh = 'รอคุณยืนยันผล';
+        if (t.status === 'resolved') statusTh = 'แก้ไขเรียบร้อยแล้ว';
+
+        return `- [${t.ticketId}] เรื่อง: ${t.issueSummary.split('\n')[0]} | สถานะ: ${statusTh} | วันที่: ${t.reportedAt.toLocaleDateString('th-TH')}`;
+      }).join('\n');
+    }
+  }
+
+  const aiResponseRaw = await geminiService.chat(conversation.messages, { 
+    userKey: userId,
+    userTicketsContext: userTicketsContext || 'ไม่พบประวัติ Ticket ของคุณในระบบ'
+  });
   const { content: aiResponse, type: responseType, topic: responseTopic } = geminiService.parseResponse(aiResponseRaw);
 
   await conversationService.appendAssistantMessage(conversation, aiResponse);

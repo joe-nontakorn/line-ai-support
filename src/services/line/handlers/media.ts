@@ -61,8 +61,7 @@ export async function handleImageMessage(
 
     return messaging.replyTextWithQuickReply(replyToken, analysisResult.response, [
       { label: '✅ แก้ได้แล้ว', text: 'แก้ได้แล้ว' },
-      { label: '❌ ยังแก้ไม่ได้', text: 'ยังแก้ไม่ได้' },
-      { label: '👤 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' },
+      { label: '📞 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' },
     ]);
   } catch (error) {
     logger.error('Error handling image', { err: error, userId, messageId: message?.id });

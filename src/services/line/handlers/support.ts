@@ -31,7 +31,7 @@ export async function promptForRating(
       { label: '⭐ 3', text: '3' },
       { label: '⭐ 4', text: '4' },
       { label: '⭐ 5', text: '5' },
-    ]
+    ],
   );
 }
 
@@ -45,25 +45,23 @@ export async function handleRating(
 ): Promise<MessageAPIResponseBase | undefined> {
   const rating = parseInt(text);
   if (isNaN(rating) || rating < 1 || rating > 5) {
-    return messaging.replyTextWithQuickReply(
-      replyToken,
-      'กรุณาให้คะแนนเป็นตัวเลข 1-5 ครับ',
-      [
-        { label: '⭐ 1', text: '1' },
-        { label: '⭐ 2', text: '2' },
-        { label: '⭐ 3', text: '3' },
-        { label: '⭐ 4', text: '4' },
-        { label: '⭐ 5', text: '5' },
-      ]
-    );
+    return messaging.replyText(replyToken, 'รบกวนเลือกคะแนน 1-5 จากปุ่มด้านล่างนะครับ');
   }
 
   conversation.rating = rating;
   conversation.status = 'closed';
-  conversation.resolved = true;
+  conversation.closedAt = new Date();
   await conversation.save();
 
-  const replyMsg = 'ขอบคุณสำหรับคะแนนประเมินครับ! หากมีปัญหาอื่นๆ สอบถามได้เสมอครับ 😊';
+  // อัปเดตคะแนนใน Ticket ล่าสุดของผู้ใช้ (ถ้ามี)
+  const lastTicket = await Ticket.findOne({ employeeId: (await conversationService.getUser(userId))?.employeeId }).sort({ reportedAt: -1 });
+  if (lastTicket) {
+    // @ts-ignore
+    lastTicket.rating = rating;
+    await lastTicket.save();
+  }
+
+  const replyMsg = `ขอบคุณสำหรับคะแนน ${rating} ดาวครับ! 🙏 เราจะนำไปปรับปรุงบริการให้ดียิ่งขึ้นครับ`;
   await conversationService.appendAssistantMessage(conversation, replyMsg);
 
   return messaging.replyTextWithQuickReply(
@@ -97,6 +95,7 @@ export async function escalateToSupport(
   if (!user) return messaging.replyText(replyToken, 'ไม่พบข้อมูลผู้ใช้ กรุณาลองใหม่อีกครั้ง');
 
   let issueSummary = 'ไม่ระบุ';
+  let hardwareDetails = '';
   let conversationToUpdate = conversation;
 
   if (!conversationToUpdate) {
@@ -109,89 +108,88 @@ export async function escalateToSupport(
     await conversationService.appendUserMessage(conversationToUpdate, text);
   }
 
-  // ใช้ AI สรุปปัญหาจากประวัติทั้งหมด (เพื่อให้ครอบคลุมสิ่งที่เพิ่งพิมพ์มาด้วย)
-  // ⚡ สำหรับ direct escalation ที่มี user message แค่ 1 ข้อความ ใช้ข้อความ user ตรงๆ โดยไม่ต้องเรียก AI
   const isDirectEscalation = conversationToUpdate.status === 'waiting_escalation_issue';
   const userMessages = conversationToUpdate.messages.filter(m => m.role === 'user');
 
-  if (isDirectEscalation && userMessages.length === 1 && text) {
-    // Direct escalation: ใช้ข้อความ user ตรงๆ เพื่อความเร็ว
-    issueSummary = text.trim();
-  } else if (conversationToUpdate.messages.length > 0) {
-    issueSummary = await conversationService.analyzeIssueSafe(conversationToUpdate.messages);
-  } else if (conversationToUpdate.issue && conversationToUpdate.issue !== 'ไม่ระบุ') {
-    issueSummary = conversationToUpdate.issue;
-  }
+  let category = 'Uncategorized';
+  let subCategory = 'Other';
+  let isItRelated = true;
+  let clarificationNeeded: string | null = null;
 
-  // 🛡️ Fallback chain: ถ้า AI สรุปไม่ได้ (timeout / error) ให้ดึงจากแหล่งอื่น
+  // 1. 🔍 เตรียมข้อมูลเบื้องต้นเพื่อดึง Asset แบบขนาน (เดาจาก keyword)
+  const rawText = (text || '').toLowerCase();
+  const printerKeywords = ['ปริ้น', 'printer', 'เครื่องพิมพ์', 'สแกน', 'scanner', 'หมึก', 'หมึกพิมพ์'];
+  const computerKeywords = ['เครื่องเสีย', 'เปิดไม่ติด', 'จอดำ', 'จอฟ้า', 'คอม', 'โน๊ตบุ๊ค', 'laptop', 'desktop', 'พีซี', 'pc', 'แฟลชไดรฟ์', 'flash drive', 'usb', 'ไฟล์', 'copy', 'คัดลอก'];
+  const otherHwKeywords = ['อุปกรณ์', 'จอ', 'เมาส์', 'คีย์บอร์ด', 'ฮาร์ดแวร์', 'พัง', 'monitor', 'keyboard', 'mouse'];
+
+  const isPrinter = printerKeywords.some(kw => rawText.includes(kw));
+  const isComputer = computerKeywords.some(kw => rawText.includes(kw));
+  const isOtherHw = otherHwKeywords.some(kw => rawText.includes(kw));
+  const maybeHardware = isPrinter || isComputer || isOtherHw;
+
+  // 2. 🧠 ดำเนินการวิเคราะห์ AI และ ดึงข้อมูล Asset ไปพร้อมๆ กัน (Parallel)
+  const [aiResult, assetResponse] = await Promise.all([
+    // AI Analysis
+    (isDirectEscalation && userMessages.length === 1 && text)
+      ? geminiService.categorizeIssue(text.trim()).then(res => ({ ...res, issueSummary: text.trim(), isITRelated: true, clarificationNeeded: null }))
+      : conversationService.analyzeAndCategorizeSafe(conversationToUpdate.messages),
+    // Asset Fetching
+    maybeHardware
+      ? (async () => {
+          let apiUrl = `${apiAsset}/assets/search?`;
+          if (isPrinter) apiUrl += `type_name=Printer`;
+          else apiUrl += `employee_name=${encodeURIComponent(user!.name)}`;
+          try {
+            const res = await fetch(apiUrl);
+            return res.ok ? await res.json() : null;
+          } catch { return null; }
+        })()
+      : Promise.resolve(null)
+  ]);
+
+  issueSummary = aiResult.issueSummary;
+  category = aiResult.category;
+  subCategory = aiResult.subCategory;
+  isItRelated = aiResult.isITRelated;
+  clarificationNeeded = aiResult.clarificationNeeded;
+
+  // 🛡️ Fallback chain
   if (issueSummary === 'ไม่ระบุ' || issueSummary === 'ไม่สามารถสรุปปัญหาได้') {
-    // Fallback 1: ใช้ issue ที่เคยบันทึกไว้ใน conversation (จากขั้นตอน troubleshooting ก่อนหน้า)
-    if (conversationToUpdate.issue && conversationToUpdate.issue !== 'ไม่ระบุ' && conversationToUpdate.issue !== 'ไม่สามารถสรุปปัญหาได้') {
+    if (conversationToUpdate.issue && conversationToUpdate.issue !== 'ไม่ระบุ') {
       issueSummary = conversationToUpdate.issue;
-    }
-    // Fallback 2: ใช้ข้อความล่าสุดที่ user พิมพ์มา
-    else if (text) {
+    } else if (text) {
       issueSummary = text.trim();
-    }
-    // Fallback 3: ดึงจากข้อความ user ในประวัติสนทนา (เอาข้อความแรกที่ user แจ้งปัญหา)
-    else if (userMessages.length > 0) {
-      issueSummary = userMessages
-        .map(m => m.content)
-        .filter(c => c.length > 3 && !c.startsWith('ใช่') && !c.startsWith('ไม่'))
-        .slice(0, 2)
-        .join(' | ') || userMessages[0].content;
     }
   }
 
   // ❌ ไม่ส่ง admin ถ้าไม่มีการระบุปัญหา
-  if (issueSummary === 'ไม่ระบุ' || issueSummary.trim() === '' || issueSummary === 'ไม่สามารถสรุปปัญหาได้') {
-    const errorMsg = '⚠️ กรุณาระบุปัญหาหรืออาการที่พบให้ชัดเจนก่อนนะครับ เจ้าหน้าที่จะได้เข้าใจและช่วยได้อย่างถูกต้อง\n\nเช่น "เชื่อมต่อ VPN ไม่ได้", "เปิด Outlook แล้ว Error", "Printer ไม่ทำงาน"';
+  if (issueSummary === 'ไม่ระบุ' || issueSummary.trim() === '') {
+    const errorMsg = '⚠️ กรุณาระบุปัญหาหรืออาการที่พบให้ชัดเจนก่อนนะครับ เพื่อความรวดเร็วในการช่วยเหลือครับ';
     await conversationService.appendAssistantMessage(conversationToUpdate, errorMsg);
-    return messaging.replyText(
-      replyToken,
-      errorMsg
-    );
+    return messaging.replyText(replyToken, errorMsg);
   }
 
-  // ❌ ตรวจสอบว่าเป็นปัญหา IT จริงหรือไม่ (ใช้ผลจาก analyzeIssue ที่มีอยู่แล้ว — ไม่เรียก AI ซ้ำ)
-  const isItRelated = checkITRelatedFromSummary(issueSummary, conversationToUpdate);
+  // ❌ ตรวจสอบความเป็น IT
   if (!isItRelated) {
-    // ปิดการสนทนาแล้วแจ้งผู้ใช้
     conversationToUpdate.status = 'closed';
-    // ไม่บันทึก issue เพื่อไม่ให้ขึ้นในรายงานสรุปปัญหา IT
     await conversationToUpdate.save();
-
-    const rejectMsg = 'ขออภัยครับ ระบบนี้รองรับเฉพาะปัญหาด้าน IT Support เท่านั้น\n\nหากมีปัญหาด้าน IT สอบถามได้เลยครับ 😊';
+    const rejectMsg = 'ขออภัยครับ ระบบนี้รองรับเฉพาะปัญหาด้าน IT Support เท่านั้นครับ 😊';
     await conversationService.appendAssistantMessage(conversationToUpdate, rejectMsg);
-
-    return messaging.replyTextWithQuickReply(
-      replyToken,
-      rejectMsg,
-      [{ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' }],
-    );
+    return messaging.replyTextWithQuickReply(replyToken, rejectMsg, [{ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' }]);
   }
-  const isSkip = text?.trim() === 'ข้าม';
-  if (!isSkip && !isDirectEscalation && conversationToUpdate.status !== 'waiting_hardware_confirm' && conversationToUpdate.status !== 'waiting_troubleshoot_confirm') {
-    // 🔍 ป้องกัน Loop โดยเช็กจำนวนข้อความในสถานะนี้ (ถ้าถามไปแล้ว 2 ครั้งยังไม่เคลียร์ ก็ให้ผ่านไป)
-    const userMessagesInState = conversationToUpdate.messages.filter(m => m.role === 'user').length;
 
-    // ถ้า issue สั้นเกินไปหรือกว้างเกินไป (เช่น "ช่วยด้วย") ถึงจะถาม clarification
-    // แต่ถ้ามีข้อมูลพอสมควรแล้ว ให้ผ่านไปขั้นตอนถัดไปเลย เพื่อความรวดเร็วตามความต้องการผู้ใช้
-    if (userMessagesInState <= 1 && issueSummary.length < 15) {
-      const clarification = await geminiService.clarifyIssue(issueSummary);
-      if (clarification && clarification !== 'CLEAR') {
-        await conversationToUpdate.save();
-        const clarMsg = `${clarification}\n\n(หรือพิมพ์ "ข้าม" เพื่อแจ้งเจ้าหน้าที่ทันที)`;
-        await conversationService.appendAssistantMessage(conversationToUpdate, clarMsg);
-        return messaging.replyText(
-          replyToken,
-          clarMsg
-        );
-      }
+  const isSkip = text?.trim() === 'ข้าม';
+  // 3. ❓ ถามย้ำหากข้อมูลไม่พอ
+  if (!isSkip && !isDirectEscalation && clarificationNeeded && conversationToUpdate.status !== 'waiting_hardware_confirm' && conversationToUpdate.status !== 'waiting_troubleshoot_confirm') {
+    const userMessagesInState = conversationToUpdate.messages.filter(m => m.role === 'user').length;
+    if (userMessagesInState <= 1) {
+      const clarMsg = `${clarificationNeeded}\n\n(หรือพิมพ์ "ข้าม" เพื่อแจ้งเจ้าหน้าที่ทันที)`;
+      await conversationService.appendAssistantMessage(conversationToUpdate, clarMsg);
+      return messaging.replyText(replyToken, clarMsg);
     }
   }
 
-  // ถ้าพิมพ์ว่า "ข้าม" ให้ข้ามการกรองรายละเอียด ดึง issue เดิมจากประวัติ
+  // ถ้าพิมพ์ว่า "ข้าม" ให้ข้ามการกรองรายละเอียด
   if (isSkip) {
     issueSummary = await conversationService.analyzeIssueSafe(
       conversationToUpdate.messages
@@ -200,364 +198,141 @@ export async function escalateToSupport(
     );
   }
 
-  // 🔎 แจ้งเรื่องอุปกรณ์ฮาร์ดแวร์ (ยกเว้นรอยืนยันฮาร์ดแวร์เดิม หรือกำลังรอคอนเฟิร์มวิธีแก้ปัญหา หรือผู้ใช้กดข้าม)
+  // 🔎 ประมวลผลข้อมูลอุปกรณ์
   if (!isSkip && !isDirectEscalation && conversationToUpdate.status !== 'waiting_hardware_confirm' && conversationToUpdate.status !== 'waiting_troubleshoot_confirm') {
-    const printerKeywords = ['ปริ้น', 'printer', 'เครื่องพิมพ์', 'สแกน', 'scanner', 'หมึก', 'หมึกพิมพ์'];
-    const computerKeywords = ['เครื่องเสีย', 'เปิดไม่ติด', 'จอดำ', 'จอฟ้า', 'คอม', 'โน๊ตบุ๊ค', 'laptop', 'desktop', 'พีซี', 'pc', 'แฟลชไดรฟ์', 'flash drive', 'usb', 'ไฟล์', 'copy', 'คัดลอก'];
-    const otherHwKeywords = ['อุปกรณ์', 'จอ', 'เมาส์', 'คีย์บอร์ด', 'ฮาร์ดแวร์', 'พัง', 'monitor', 'keyboard', 'mouse'];
+    if (assetResponse && assetResponse.success && assetResponse.data && assetResponse.data.length > 0) {
+      let assets = assetResponse.data.filter((a: any) => {
+        const status = (a.status || '').toLowerCase();
+        return status !== 'retired' && status !== 'disposed';
+      });
 
-    const summaryLower = issueSummary.toLowerCase();
-    const isPrinter = printerKeywords.some(kw => summaryLower.includes(kw));
-    const isComputer = computerKeywords.some(kw => summaryLower.includes(kw));
-    const isOtherHw = otherHwKeywords.some(kw => summaryLower.includes(kw));
+      if (isPrinter) {
+        assets = assets.filter((a: any) => a.type_name === 'Printer');
+      } else if (isComputer) {
+        assets = assets.filter((a: any) => a.type_name === 'Laptop' || a.type_name === 'Desktop');
+      }
 
-    if (isPrinter || isComputer || isOtherHw) {
-      try {
-        let apiUrl = `${apiAsset}/assets/search?`;
-        let useFilter = false;
+      const summaryLower = issueSummary.toLowerCase();
+      if (assets.length > 0) {
+        const commonStopWords = ['เครื่อง', 'ไม่', 'ได้', 'ไม่ได้', 'มี', 'ปัญหา', 'แก้', 'ไข', 'แก้ไข', 'ช่วย', 'ครับ', 'ค่ะ', 'ที่', 'ของ', 'และ', 'หรือ', 'กับ', 'ใน', 'จะ'];
+        const issueWords = summaryLower
+          .replace(/[^\u0E00-\u0E7Fa-z0-9\s]/gi, ' ')
+          .split(/\s+/)
+          .filter(w => w.length >= 2 && !commonStopWords.includes(w));
 
-        if (isPrinter) {
-          // Shared devices (Printer/Scanner)
-          apiUrl += `type_name=Printer`;
-          useFilter = true; // Use local filter as fallback/backup
-        } else {
-          // Personal devices (Search by employee name)
-          apiUrl += `employee_name=${encodeURIComponent(user!.name)}`;
-          // ถ้าเป็นเรื่องคอม หรือเรื่องไฟล์/USB ให้กรองเอาเฉพาะคอมพิวเตอร์
-          if (isComputer) useFilter = true;
-        }
-
-        const res = await fetch(apiUrl);
-        if (res.ok) {
-          const result = await res.json() as any;
-          if (result.success && result.data && result.data.length > 0) {
-            let assets = result.data.filter((a: any) => {
-              const status = (a.status || '').toLowerCase();
-              return status !== 'retired' && status !== 'disposed';
-            });
-
-            // Filter for specific types if context is known
-            if (useFilter) {
-              if (isPrinter) {
-                assets = assets.filter((a: any) => a.type_name === 'Printer');
-              } else if (isComputer) {
-                assets = assets.filter((a: any) =>
-                  a.type_name === 'Laptop' || a.type_name === 'Desktop'
-                );
-              }
+        if (issueWords.length > 0 && assets.length > 1) {
+          const scoredAssets = assets.map((a: any) => {
+            const brand = (a.brand || '').toLowerCase();
+            const model = (a.model || '').toLowerCase().replace(/\s+/g, '');
+            const desc = (a.description || '').toLowerCase();
+            let score = 0;
+            for (const word of issueWords) {
+              if (brand.includes(word)) score += 3;
+              if (model.includes(word)) score += 5;
+              if (desc.includes(word)) score += 4;
             }
-
-            // 🧠 Relevance Scoring: วิเคราะห์ Brand, Model, Description, Location
-            // ใช้กับ hardware ทุกประเภท (Printer, Computer, Other)
-            const commonStopWords = [
-              'เครื่อง', 'ไม่', 'ได้', 'ไม่ได้', 'มี', 'ปัญหา', 'แก้', 'ไข', 'แก้ไข',
-              'ช่วย', 'ครับ', 'ค่ะ', 'ที่', 'ของ', 'และ', 'หรือ', 'กับ', 'ใน', 'จะ',
-              'ให้', 'เป็น', 'อยู่', 'ไฟ', 'สี', 'แดง', 'เขียว', 'เหลือง', 'ส้ม',
-              'กะพริบ', 'ติด', 'ดับ', 'error', 'ทำงาน', 'ใช้', 'งาน',
-              'รุ่น', 'model', 'brand', 'ยี่ห้อ', 'เครื่องนี้', 'เปิด', 'ปิด',
-              'บอก', 'ว่า', 'ตอน', 'แล้ว', 'แต่', 'ก็', 'จะ', 'ยัง', 'คือ',
-            ];
-            const printerStopWords = ['ปริ้น', 'printer', 'เครื่องพิมพ์', 'พิมพ์', 'ออก', 'ไม่ออก', 'กระดาษ', 'หมึก', 'จาม'];
-            const computerStopWords = ['คอม', 'โน๊ตบุ๊ค', 'laptop', 'desktop', 'พีซี', 'เครื่องเสีย', 'เปิดไม่ติด', 'จอดำ', 'จอฟ้า', 'ค้าง', 'ช้า'];
-            const otherHwStopWords = ['อุปกรณ์', 'ฮาร์ดแวร์', 'พัง'];
-
-            const stopWords = [
-              ...commonStopWords,
-              ...(isPrinter ? printerStopWords : []),
-              ...(isComputer ? computerStopWords : []),
-              ...(isOtherHw ? otherHwStopWords : []),
-            ];
-
-            const issueWords = summaryLower
-              .replace(/[^\u0E00-\u0E7Fa-z0-9\s]/gi, ' ')
-              .split(/\s+/)
-              .filter(w => w.length >= 2)
-              .filter(w => !stopWords.includes(w));
-
-            if (issueWords.length > 0 && assets.length > 1) {
-              const scoredAssets: { asset: any; score: number }[] = assets.map((a: any) => {
-                const brand = (a.brand || '').toLowerCase();
-                const model = (a.model || '').toLowerCase().replace(/\s+/g, '');
-                const modelOriginal = (a.model || '').toLowerCase();
-                const desc = (a.description || '').toLowerCase();
-                const loc = (a.location_name || '').toLowerCase();
-
-                let score = 0;
-                for (const word of issueWords) {
-                  const wordNoSpace = word.replace(/\s+/g, '');
-                  if (brand.includes(word)) score += 3;                    // Brand match
-                  if (model.includes(wordNoSpace) || modelOriginal.includes(word)) score += 5; // Model match
-                  if (desc.includes(word)) score += 4;                     // Description match
-                  if (loc.includes(word)) score += 2;                      // Location match
-                }
-
-                return { asset: a, score };
-              });
-
-              scoredAssets.sort((a, b) => b.score - a.score);
-
-              const maxScore = scoredAssets[0]?.score || 0;
-              if (maxScore > 0) {
-                const threshold = Math.max(maxScore * 0.7, 1);
-                assets = scoredAssets
-                  .filter(s => s.score >= threshold)
-                  .map(s => s.asset);
-              }
-            }
-
-            // กรองเพิ่มเติมด้วยชั้น (ถ้า user ระบุ — ใช้ได้กับทุกประเภท)
-            const floorMatch = summaryLower.match(/ชั้น\s*(\d+)/i) || summaryLower.match(/(\d+)\s*f/i);
-            if (floorMatch) {
-              const floorNum = floorMatch[1] || floorMatch[2];
-              const floorFiltered = assets.filter((a: any) => {
-                const loc = (a.location_name || '').toLowerCase();
-                const desc = (a.description || '').toLowerCase();
-                return loc.includes(`${floorNum}f`) || loc.includes(`ชั้น ${floorNum}`) || loc.includes(`ชั้น${floorNum}`) ||
-                  desc.includes(`${floorNum}f`) || desc.includes(`ชั้น ${floorNum}`) || desc.includes(`ชั้น${floorNum}`);
-              });
-              if (floorFiltered.length > 0) assets = floorFiltered;
-            }
-
-            // กรองขาวดำ/สี (เฉพาะ Printer)
-            if (isPrinter) {
-              const isBW = summaryLower.includes('ขาวดำ') || summaryLower.includes('ขาว-ดำ');
-              const isColorPrinter = /(ปริ้น|เครื่อง|พิมพ์|printer)\s*สี/i.test(summaryLower) && !isBW;
-
-              if (isBW) {
-                const bwFiltered = assets.filter((a: any) => {
-                  const desc = (a.description || '').toLowerCase();
-                  return desc.includes('ขาวดำ') || desc.includes('ขาว-ดำ') || desc.includes('ดำ') || desc.includes('bw');
-                });
-                if (bwFiltered.length > 0) assets = bwFiltered;
-              } else if (isColorPrinter) {
-                const colorFiltered = assets.filter((a: any) => {
-                  const desc = (a.description || '').toLowerCase();
-                  return desc.includes('สี') || desc.includes('color');
-                });
-                if (colorFiltered.length > 0) assets = colorFiltered;
-              }
-            }
-
-            if (assets.length > 0) {
-              assets = assets.slice(0, 12); // Limit to 12 for Quick Replies (max 13 buttons limit)
-              conversationToUpdate.status = 'waiting_hardware_confirm';
-              conversationToUpdate.assetInfo = JSON.stringify(assets);
-              await conversationToUpdate.save();
-
-              const getAssetLabel = (a: any) => {
-                const brandModel = `${a.brand || ''} ${a.model || ''}`.trim();
-                const loc = a.location_name ? ` (${a.location_name})` : '';
-                return `${brandModel}${loc}`.substring(0, 15); // Leave room for emoji
-              };
-
-              const getAssetDesc = (a: any) => {
-                let desc = `${a.brand} ${a.model}\n   S/N: ${a.serial_no}`;
-                if (a.location_name) desc += `\n   📍 ตำแหน่ง: ${a.location_name}`;
-                if (a.description) desc += `\n   📝 รายละเอียด: ${a.description}`;
-                return desc;
-              };
-
-              if (assets.length === 1) {
-                const asset = assets[0];
-                const assetStr = `${asset.brand} ${asset.model} (S/N: ${asset.serial_no})`;
-                let msg = `ปัญหาที่แจ้งมา เกิดขึ้นกับเครื่อง **${assetStr}** ใช่ไหมครับ?`;
-                if (asset.location_name) msg = `ตรวจพบว่าคุณกำลังใช้งานเครื่อง **${assetStr}** ที่ ${asset.location_name} ใช่เครื่องที่มีปัญหาหรือไม่ครับ?`;
-
-                await conversationService.appendAssistantMessage(conversationToUpdate, msg);
-
-                return messaging.replyTextWithQuickReply(
-                  replyToken,
-                  msg,
-                  [
-                    { label: '✅ ใช่ เครื่องนี้', text: 'ใช่ เกี่ยวกับเครื่องนี้' },
-                    { label: '❌ ไม่ใช่เครื่องนี้', text: 'ไม่ใช่เครื่องนี้' }
-                  ]
-                );
-              } else {
-                // Multiple assets
-                const quickReplies = assets.map((a: any) => ({
-                  label: `✅ ${getAssetLabel(a)}`.substring(0, 20).trim(),
-                  text: `ใช่ เกี่ยวกับเครื่อง S/N: ${a.serial_no}`
-                }));
-                quickReplies.push({ label: '❌ ไม่ใช่สักเครื่อง', text: 'ไม่ใช่เครื่องนี้' });
-
-                const listStr = assets.map((a: any, i: number) => `${i + 1}. ${getAssetDesc(a)}`).join('\n\n');
-                const promptMsg = isPrinter
-                  ? `พบเครื่องพิมพ์ในระบบดังนี้ครับ ไม่ทราบว่าเป็นเครื่องไหนที่คุณกำลังใช้งานอยู่ครับ? 👇\n\n${listStr}`
-                  : `ไม่ทราบว่าปัญหาเกิดขึ้นกับอุปกรณ์เครื่องไหนครับ? รบกวนเลือกรายการด้านล่างเพื่อให้เจ้าหน้าที่ตรวจสอบได้รวดเร็วขึ้นครับ 👇\n\n${listStr}`;
-
-                await conversationService.appendAssistantMessage(conversationToUpdate, promptMsg);
-
-                return messaging.replyTextWithQuickReply(
-                  replyToken,
-                  promptMsg,
-                  quickReplies
-                );
-              }
-            }
+            return { asset: a, score };
+          });
+          scoredAssets.sort((a: any, b: any) => b.score - a.score);
+          if (scoredAssets[0].score > 0) {
+            const maxScore = scoredAssets[0].score;
+            assets = scoredAssets.filter((s: any) => s.score >= maxScore * 0.7).map((s: any) => s.asset);
           }
         }
-      } catch (err) {
-        logger.error('Error fetching asset info:', err);
+
+        if (assets.length > 0) {
+          assets = assets.slice(0, 12);
+          conversationToUpdate.status = 'waiting_hardware_confirm';
+          conversationToUpdate.assetInfo = JSON.stringify(assets);
+          await conversationToUpdate.save();
+
+          const getAssetLabel = (a: any) => `${a.brand || ''} ${a.model || ''} (${a.location_name || ''})`.substring(0, 15);
+          const getAssetDesc = (a: any) => `${a.brand} ${a.model}\n   S/N: ${a.serial_no}${a.location_name ? '\n   📍 ตำแหน่ง: ' + a.location_name : ''}`;
+
+          if (assets.length === 1) {
+            const asset = assets[0];
+            const msg = `ปัญหาที่แจ้งมา เกิดขึ้นกับเครื่อง **${asset.brand} ${asset.model} (S/N: ${asset.serial_no})** ใช่ไหมครับ?`;
+            await conversationService.appendAssistantMessage(conversationToUpdate, msg);
+            return messaging.replyTextWithQuickReply(replyToken, msg, [
+              { label: '✅ ใช่ เครื่องนี้', text: 'ใช่ เกี่ยวกับเครื่องนี้' },
+              { label: '❌ ไม่ใช่เครื่องนี้', text: 'ไม่ใช่เครื่องนี้' }
+            ]);
+          } else {
+            const quickReplies = assets.map((a: any) => ({
+              label: `✅ ${getAssetLabel(a)}`.trim(),
+              text: `ใช่ เกี่ยวกับเครื่อง S/N: ${a.serial_no}`
+            }));
+            quickReplies.push({ label: '❌ ไม่ใช่สักเครื่อง', text: 'ไม่ใช่เครื่องนี้' });
+            const listStr = assets.map((a: any, i: number) => `${i + 1}. ${getAssetDesc(a)}`).join('\n\n');
+            const promptMsg = `พบอุปกรณ์ในระบบดังนี้ครับ ไม่ทราบว่าเป็นเครื่องไหนครับ? 👇\n\n${listStr}`;
+            await conversationService.appendAssistantMessage(conversationToUpdate, promptMsg);
+            return messaging.replyTextWithQuickReply(replyToken, promptMsg, quickReplies);
+          }
+        }
       }
     }
   }
 
-  // 🤖 ขั้นตอนการแนะนำวิธีแก้ปัญหาเบื้องต้น (Self-Service)
-  // จะข้ามขั้นตอนนี้ถ้า:
-  // 1. ผู้ใช้พิมพ์ "ข้าม" มา
-  // 2. เคยผ่านขั้นตอนนี้มาแล้ว
-  // 3. ปัญหามีความชัดเจนมากพอ (เช่น ระบุชั้น/สถานที่ หรือ สรุปปัญหาได้ยาวพอ)
+  // 🤖 Troubleshooting Advice
   const isClearEnough = issueSummary.length > 25 || issueSummary.includes('ชั้น') || issueSummary.includes('ที่');
-
-  if (!isSkip && !isDirectEscalation && !isClearEnough && conversationToUpdate!.status !== 'waiting_troubleshoot_confirm') {
+  if (!isSkip && !isDirectEscalation && !isClearEnough && conversationToUpdate.status !== 'waiting_troubleshoot_confirm') {
     const advice = await geminiService.getTroubleshootingAdvice(issueSummary);
-
     conversationToUpdate.status = 'waiting_troubleshoot_confirm';
     conversationToUpdate.issue = issueSummary;
     await conversationToUpdate.save();
-
-    const adviceMsg = `💡 ลองทำตามขั้นตอนเบื้องต้นด้านล่างนี้ดูนะครับ อาจช่วยให้ปัญหาคุณดีขึ้นทันที:\n\n${advice}\n\nลองทำตามดูแล้วเป็นอย่างไรบ้างครับ?`;
+    const adviceMsg = `💡 ลองทำตามขั้นตอนเบื้องต้นดูนะครับ:\n\n${advice}\n\nเป็นอย่างไรบ้างครับ?`;
     await conversationService.appendAssistantMessage(conversationToUpdate, adviceMsg);
-
-    return messaging.replyTextWithQuickReply(
-      replyToken,
-      adviceMsg,
-      [
-        { label: '✅ พิมพ์แก้ได้แล้ว', text: 'แก้ได้แล้ว' },
-        { label: '❌ ยังแก้ไม่ได้', text: 'ยังแก้ไม่ได้' }
-      ]
-    );
+    return messaging.replyTextWithQuickReply(replyToken, adviceMsg, [
+      { label: '✅ พิมพ์แก้ได้แล้ว', text: 'แก้ได้แล้ว' },
+      { label: '📞 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' }
+    ]);
   }
 
-  // ✅ ปิดการสนทนาและบันทึกข้อมูล (เมื่อยืนยันว่ายังแก้ไม่ได้)
+  // ✅ Final Escalation
   conversationToUpdate.status = 'closed';
   conversationToUpdate.escalated = true;
   conversationToUpdate.issue = issueSummary;
   await conversationToUpdate.save();
 
-  let hardwareDetails = '';
   if (conversationToUpdate.assetInfo) {
     try {
       const assetData = JSON.parse(conversationToUpdate.assetInfo);
       if (assetData && !Array.isArray(assetData)) {
-        const loc = assetData.location_name ? ` [${assetData.location_name}]` : '';
-        let warrantyInfo = '';
-        if (assetData.warranty_expiry) {
-          const expiryDate = new Date(assetData.warranty_expiry);
-          const now = new Date();
-          if (expiryDate < now) {
-            warrantyInfo = '\n   🛡️ สถานะประกัน: หมดประกันแล้ว';
-          } else {
-            const diffTime = expiryDate.getTime() - now.getTime();
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-            let timeStr = '';
-            if (diffDays >= 365) {
-              const years = Math.floor(diffDays / 365);
-              const months = Math.floor((diffDays % 365) / 30);
-              timeStr = `${years} ปี ${months > 0 ? months + ' เดือน' : ''}`.trim();
-            } else if (diffDays >= 30) {
-              const months = Math.floor(diffDays / 30);
-              const days = diffDays % 30;
-              timeStr = `${months} เดือน ${days > 0 ? days + ' วัน' : ''}`.trim();
-            } else {
-              timeStr = `${diffDays} วัน`;
-            }
-            warrantyInfo = `\n   🛡️ สถานะประกัน: เหลืออีก ${timeStr}`;
-          }
-        }
-        hardwareDetails = `\n💻 อุปกรณ์: ${assetData.brand} ${assetData.model}${loc} (S/N: ${assetData.serial_no})${warrantyInfo}`;
+        hardwareDetails = `\n💻 อุปกรณ์: ${assetData.brand} ${assetData.model} (S/N: ${assetData.serial_no})`;
       }
     } catch (e) { }
   }
 
-  // ✅ แจ้ง Admin Group (เฉพาะปัญหา IT ที่มีการระบุชัดเจน)
   const adminGroupId = process.env.ADMIN_GROUP_ID;
-
-  // Gen Ticket ID (e.g. IT-A1B2C3) แบบสุ่ม (ไม่เป็นแพทเทิร์น)
-  const randomStr = Math.random().toString(36).substring(2, 8).toUpperCase();
-  const ticketId = `IT-${randomStr}`;
-
-  // บันทึกข้อมูลลง MongoDB ตามรูปแบบ
-  // 🏷️ เพิ่มการจัดหมวดหมู่โดย AI
-  const { category, subCategory } = await geminiService.categorizeIssue(issueSummary);
+  const ticketId = `IT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
   const newTicket = new Ticket({
-    ticketId: ticketId,
-    name: user!.name,
-    employeeId: user!.employeeId,
-    department: user!.department,
-    email: user!.email || 'ไม่ระบุ',
-    phone: user!.phone || 'ไม่ระบุ',
+    ticketId,
+    name: user.name,
+    employeeId: user.employeeId,
+    department: user.department,
+    email: user.email || 'ไม่ระบุ',
+    phone: user.phone || 'ไม่ระบุ',
     issueSummary: issueSummary + hardwareDetails,
-    category: category,
-    subCategory: subCategory
+    category,
+    subCategory
   });
   await newTicket.save();
 
   if (adminGroupId) {
-    const adminMessage =
-      `🚨 มีการแจ้งเคสใหม่จากพนักงาน\n` +
-      `🎫 เลขที่ Ticket: ${ticketId}\n\n` +
-      `👤 ชื่อ: ${user!.name}\n` +
-      `🆔 รหัสพนักงาน: ${user!.employeeId}\n` +
-      `📁 แผนก: ${user!.department}\n` +
-      `📧 Email: ${user!.email || 'ไม่ระบุ'}\n` +
-      `📞 เบอร์ติดต่อ: ${user!.phone || 'ไม่ระบุ'}\n\n` +
-      `📁 หมวดหมู่: ${category} (${subCategory})\n` +
-      `📝 สรุปปัญหา: ${issueSummary}${hardwareDetails}`;
-
+    const adminMessage = `🚨 แจ้งเคสใหม่: ${ticketId}\n👤 ${user.name}\n📁 ${category}\n📝 ${issueSummary}${hardwareDetails}`;
     await messaging.pushText(adminGroupId, adminMessage);
   }
 
-  // ✅ ตอบกลับผู้ใช้พร้อมปุ่มเริ่มสนทนาใหม่
-  const finalMsg = `รับทราบครับ! ✅ ระบบได้แจ้งเจ้าหน้าที่ IT Support ให้เรียบร้อยแล้ว\n🎫 เลขที่ Ticket ของคุณคือ: ${ticketId}\n\nเจ้าหน้าที่จะติดต่อกลับหาคุณโดยเร็วที่สุดครับ 🙏\n\n─────────────────\nหากต้องการแจ้งปัญหาเพิ่มเติม กดปุ่มเพื่อเริ่มการสนทนาใหม่ได้เลยครับ 👇`;
+  const finalMsg = `รับทราบครับ! ✅ แจ้งเจ้าหน้าที่เรียบร้อยแล้ว\n🎫 เลข Ticket: ${ticketId}\n\nเจ้าหน้าที่จะติดต่อกลับโดยเร็วที่สุดครับ 🙏`;
   await conversationService.appendAssistantMessage(conversationToUpdate, finalMsg);
-
-  return messaging.replyTextWithQuickReply(
-    replyToken,
-    finalMsg,
-    [{ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' }],
-  );
+  return messaging.replyTextWithQuickReply(replyToken, finalMsg, [{ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' }]);
 }
 
-/**
- * ตรวจสอบว่าปัญหาเกี่ยวข้องกับ IT หรือไม่
- * ใช้ Gemini AI วิเคราะห์ + pattern matching เป็น fallback
- */
-function checkITRelatedFromSummary(issueSummary: string, conversation: ConversationDoc): boolean {
-  // ⚡ ใช้ pattern matching กับ issueSummary ที่ได้จาก analyzeIssue แล้ว (ไม่เรียก AI ซ้ำ)
-  // เพราะ analyzeIssue จะตอบ NON_IT_ISSUE ถ้าไม่ใช่ปัญหา IT อยู่แล้ว
-  const nonItPatterns = [
-    'NON_IT',
-    'OUT_OF_SCOPE',
-    'ไม่เกี่ยวกับ IT',
-    'นอกขอบเขต',
-    'ไม่ใช่ปัญหา IT',
-  ];
-
+export function checkITRelatedFromSummary(issueSummary: string, conversation: ConversationDoc): boolean {
+  const nonItPatterns = ['NON_IT', 'OUT_OF_SCOPE', 'ไม่เกี่ยวกับ IT'];
   for (const pattern of nonItPatterns) {
-    if (issueSummary.toUpperCase().includes(pattern.toUpperCase())) {
-      logger.info(`[IT-Filter] Rejected non-IT issue: "${issueSummary}"`);
-      return false;
-    }
+    if (issueSummary.toUpperCase().includes(pattern.toUpperCase())) return false;
   }
-
-  // ตรวจสอบจากประวัติสนทนา ถ้า AI ตอบว่าไม่เกี่ยวกับ IT ทุกครั้ง
-  const assistantMessages = conversation.messages.filter(m => m.role === 'assistant');
-  if (assistantMessages.length > 0) {
-    const outOfScopeCount = assistantMessages.filter(m =>
-      m.content.includes('[OUT_OF_SCOPE]') ||
-      m.content.includes('ไม่ใช่ปัญหา IT') ||
-      m.content.includes('นอกขอบเขต') ||
-      m.content.includes('นอกเหนือจากขอบเขต')
-    ).length;
-
-    if (outOfScopeCount > 0 && outOfScopeCount === assistantMessages.length) {
-      logger.info(`[IT-Filter] Rejected based on conversation history: "${issueSummary}"`);
-      return false;
-    }
-  }
-
   return true;
 }

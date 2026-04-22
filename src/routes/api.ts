@@ -652,8 +652,8 @@ router.put('/tickets/:ticketId/status', upload.array('files', 5), async (req: Re
     if (status === 'resolved' || status === 'waiting_user_confirm') {
       await Notification.create({
         type: 'resolved_ticket',
-        title: status === 'resolved' ? 'เคสแก้ไขสำเร็จแล้ว' : 'เจ้าหน้าที่แจ้งแก้ไขงาน',
-        content: `${ticket.name}: ${ticket.issueSummary.split('\n')[0]}`,
+        title: 'แก้ไขเคสสำเร็จ',
+        content: `${ticket.issueSummary.split('\n')[0]}\nผู้แจ้ง: ${ticket.name}`,
         metadata: { ticketId: ticket.ticketId, _id: ticket._id },
         timestamp: new Date()
       });

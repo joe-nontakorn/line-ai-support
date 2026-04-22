@@ -104,11 +104,26 @@ export class ConversationService {
 
   async analyzeIssueSafe(messages: ConversationMessage[]): Promise<string> {
     try {
-      const result = await geminiService.analyzeIssue(messages);
-      return typeof result === 'string' && result.trim() ? result.trim() : 'ไม่สามารถสรุปปัญหาได้';
+      const result = await geminiService.analyzeAndCategorizeIssue(messages);
+      return result.issueSummary;
     } catch (error) {
       logger.error('Error analyzing issue:', error);
       return 'ไม่สามารถสรุปปัญหาได้';
+    }
+  }
+
+  async analyzeAndCategorizeSafe(messages: ConversationMessage[]) {
+    try {
+      return await geminiService.analyzeAndCategorizeIssue(messages);
+    } catch (error) {
+      logger.error('Error analyzing and categorizing issue:', error);
+      return { 
+        issueSummary: 'ไม่สามารถสรุปปัญหาได้', 
+        category: 'Uncategorized', 
+        subCategory: 'Other', 
+        isITRelated: true,
+        clarificationNeeded: null
+      };
     }
   }
 
