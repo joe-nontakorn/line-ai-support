@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import Conversation from '../../models/Conversation.js';
 import User from '../../models/User.js';
+import Notification from '../../models/Notification.js';
 import geminiService from '../gemini.js';
 import { ConversationDoc, ConversationStatus, ConversationMessage } from './types.js';
 import { getBangkokDateKey, now, sanitizeFreeText } from './utils.js';
@@ -122,7 +123,7 @@ export class ConversationService {
     email?: string;
     phone?: string;
   }): Promise<void> {
-    await User.findOneAndUpdate(
+    const user = await User.findOneAndUpdate(
       { lineUserId: userId },
       {
         $set: {
@@ -140,5 +141,16 @@ export class ConversationService {
         setDefaultsOnInsert: true,
       },
     );
+
+    // --- สร้าง Notification สำหรับ Dashboard ---
+    if (user) {
+      await Notification.create({
+        type: 'new_user',
+        title: 'มีผู้ใช้ใหม่ลงทะเบียน',
+        content: `${payload.name} (${payload.employeeId}) ได้ลงทะเบียนเข้าใช้งานระบบ`,
+        metadata: { userId: user._id, employeeId: payload.employeeId },
+        timestamp: new Date()
+      });
+    }
   }
 }

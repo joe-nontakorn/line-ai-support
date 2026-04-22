@@ -20,7 +20,6 @@ export async function handleRegistration(
     registration.setState(userId, { step: 1 });
     return messaging.replyText(
       replyToken,
-      'สวัสดีครับ! ฉันคือ AI ด้าน IT Support ของบริษัท Jastel Network ยินดีให้บริการครับ 👋\n\n' +
       '⚠️ ประกาศสำคัญก่อนใช้งาน:\n' +
       '- ระบบนี้ออกแบบมาเพื่อตรวจสอบสิทธิ์ผ่านฐานข้อมูลพนักงานบริษัท\n' +
       '- การสนทนาจะถูกบันทึกเพื่อนำไปปรับปรุงระบบและให้บริการในภายหลัง\n' +
@@ -74,7 +73,7 @@ export async function handleRegistration(
       } else {
         return messaging.replyText(
           replyToken,
-          '❌ ขออภัย ไม่พบข้อมูลของคุณในระบบของบริษัทครับ\n\nกรุณาลองตรวจสอบและค้นหาอีกครั้ง โดยพิมพ์ **รหัสพนักงาน** หรือ **Email** สำหรับยืนยันตัวตนให้ถูกต้องครับ'
+          '❌ ขออภัย ไม่พบข้อมูลของคุณในระบบของบริษัทครับ\n\nกรุณาลงทะเบียนเพื่อเริ่มใช้งาน โดยใส่รหัสพนักงาน เช่น **1234** หรือ **Email** อย่างใดอย่างหนึ่ง เพื่อให้ระบบตรวจสอบครับ:'
         );
       }
     } catch (error) {
@@ -86,17 +85,17 @@ export async function handleRegistration(
   if (state.step === 2) {
     if (text.trim() === 'ยกเลิก') {
       registration.clearState(userId);
-      return messaging.replyText(replyToken, 'ยกเลิกการลงทะเบียนแล้วครับ หากต้องการเริ่มใหม่ ให้พิมพ์ รหัสพนักงาน หรือ Email อีกครั้งเพื่อลงทะเบียนครับ');
+      return messaging.replyText(replyToken, 'ยกเลิกการลงทะเบียนแล้วครับ\n\nกรุณาลงทะเบียนเพื่อเริ่มใช้งาน โดยใส่รหัสพนักงาน เช่น **1234** หรือ **Email** อย่างใดอย่างหนึ่ง เพื่อให้ระบบตรวจสอบครับ:');
     }
 
     if (!state.otp || !state.otpExpiresAt || !state.tempPayload) {
       registration.setState(userId, { step: 1 });
-      return messaging.replyText(replyToken, 'เซสชั่นการลงทะเบียนหมดอายุหรือไม่ถูกต้อง กรุณาเริ่มพิมพ์ รหัสพนักงาน หรือ Email ใหม่อีกครั้งครับ');
+      return messaging.replyText(replyToken, 'เซสชั่นการลงทะเบียนหมดอายุหรือไม่ถูกต้อง\n\nกรุณาลงทะเบียนเพื่อเริ่มใช้งาน โดยใส่รหัสพนักงาน เช่น **1234** หรือ **Email** อย่างใดอย่างหนึ่ง เพื่อให้ระบบตรวจสอบครับ:');
     }
 
     if (Date.now() > state.otpExpiresAt) {
       registration.setState(userId, { step: 1 });
-      return messaging.replyText(replyToken, '❌ รหัส OTP หมดอายุการใช้งานแล้ว (เกิน 5 นาที) กรุณาเริ่มพิมพ์ รหัสพนักงาน หรือ Email ใหม่อีกครั้งครับ');
+      return messaging.replyText(replyToken, '❌ รหัส OTP หมดอายุการใช้งานแล้ว (เกิน 5 นาที)\n\nกรุณาลงทะเบียนเพื่อเริ่มใช้งาน โดยใส่รหัสพนักงาน เช่น **1234** หรือ **Email** อย่างใดอย่างหนึ่ง เพื่อให้ระบบตรวจสอบครับ:');
     }
 
     if (text.trim() !== state.otp) {
@@ -130,12 +129,12 @@ export async function handleRegistration(
   if (state.step === 3) {
     if (text.trim() === 'ยกเลิก') {
       registration.clearState(userId);
-      return messaging.replyText(replyToken, 'ยกเลิกการลงทะเบียนแล้วครับ');
+      return messaging.replyText(replyToken, 'ยกเลิกการลงทะเบียนแล้วครับ\n\nกรุณาลงทะเบียนเพื่อเริ่มใช้งาน โดยใส่รหัสพนักงาน เช่น **1234** หรือ **Email** อย่างใดอย่างหนึ่ง เพื่อให้ระบบตรวจสอบครับ:');
     }
 
     if (!state.tempPayload) {
       registration.setState(userId, { step: 1 });
-      return messaging.replyText(replyToken, 'เซสชั่นการลงทะเบียนไม่ถูกต้อง กรุณาเริ่มใหม่ครับ');
+      return messaging.replyText(replyToken, 'เซสชั่นการลงทะเบียนไม่ถูกต้อง\n\nกรุณาลงทะเบียนเพื่อเริ่มใช้งาน โดยใส่รหัสพนักงาน เช่น **1234** หรือ **Email** อย่างใดอย่างหนึ่ง เพื่อให้ระบบตรวจสอบครับ:');
     }
 
     const phone = normalizePhone(text.trim());

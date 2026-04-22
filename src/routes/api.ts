@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import User from '../models/User.js';
 import Conversation from '../models/Conversation.js';
 import Ticket from '../models/Ticket.js';
+import Notification from '../models/Notification.js';
 import { lineClient } from '../services/line/client.js';
 import { MessagingService } from '../services/line/messaging.js';
 import { logger } from '../utils/logger.js';
@@ -219,6 +220,25 @@ router.get('/tickets', async (req: Request, res: Response) => {
   } catch (error) {
     logger.error('Error fetching tickets:', error);
     res.status(500).json({ success: false, error: 'Failed to fetch tickets' });
+  }
+});
+
+/**
+ * GET /api/tickets/:ticketId - ดึงรายละเอียด Ticket รายใบ
+ */
+router.get('/tickets/:ticketId', async (req: Request, res: Response) => {
+  try {
+    const { ticketId } = req.params;
+    const ticket = await Ticket.findOne({ ticketId }).lean();
+    
+    if (!ticket) {
+      return res.status(404).json({ success: false, error: 'Ticket not found' });
+    }
+
+    res.json({ success: true, data: ticket });
+  } catch (error) {
+    logger.error('Error fetching ticket detail:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch ticket detail' });
   }
 });
 
@@ -628,10 +648,76 @@ router.put('/tickets/:ticketId/status', upload.array('files', 5), async (req: Re
       await messagingService.pushMultipleMessages(user.lineUserId, lineMessages);
     }
 
+    // --- สร้าง Notification สำหรับ Dashboard ---
+    if (status === 'resolved' || status === 'waiting_user_confirm') {
+      await Notification.create({
+        type: 'resolved_ticket',
+        title: status === 'resolved' ? 'เคสแก้ไขสำเร็จแล้ว' : 'เจ้าหน้าที่แจ้งแก้ไขงาน',
+        content: `${ticket.name}: ${ticket.issueSummary.split('\n')[0]}`,
+        metadata: { ticketId: ticket.ticketId, _id: ticket._id },
+        timestamp: new Date()
+      });
+    }
+
     res.json({ success: true, data: ticket });
   } catch (error) {
     logger.error('Error updating ticket status:', error);
     res.status(500).json({ success: false, error: 'Failed to update ticket status' });
+  }
+});
+
+/**
+ * GET /api/notifications - ดึงประวัติแจ้งเตือนย้อนหลัง
+ */
+router.get('/notifications', async (req: Request, res: Response) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 50;
+    const notifications = await Notification.find()
+      .sort({ timestamp: -1 })
+      .limit(limit)
+      .lean();
+    
+    res.json({ success: true, data: notifications });
+  } catch (error) {
+    logger.error('Error fetching notifications:', error);
+    res.status(500).json({ success: false, error: 'Failed' });
+  }
+});
+
+/**
+ * PUT /api/notifications/:id/read - ทำเครื่องหมายว่าอ่านแล้ว
+ */
+router.put('/notifications/:id/read', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    await Notification.findByIdAndUpdate(id, { isRead: true });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false });
+  }
+});
+
+/**
+ * PUT /api/notifications/read-all - ทำเครื่องหมายว่าอ่านแล้วทั้งหมด
+ */
+router.put('/notifications/read-all', async (_req: Request, res: Response) => {
+  try {
+    await Notification.updateMany({ isRead: false }, { isRead: true });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false });
+  }
+});
+
+/**
+ * DELETE /api/notifications - ล้างประวัติแจ้งเตือน
+ */
+router.delete('/notifications', async (_req: Request, res: Response) => {
+  try {
+    await Notification.deleteMany({});
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false });
   }
 });
 
