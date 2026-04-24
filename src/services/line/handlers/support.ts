@@ -312,6 +312,7 @@ export async function escalateToSupport(
     employeeId: user.employeeId,
     department: user.department,
     phone: user.phone || 'ไม่ระบุ',
+    email: user.email || 'ไม่ระบุ',
     issueSummary: issueSummary + hardwareDetails,
     category,
     subCategory
