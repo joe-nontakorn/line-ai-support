@@ -136,14 +136,14 @@ export async function escalateToSupport(
     // Asset Fetching
     maybeHardware
       ? (async () => {
-          let apiUrl = `${apiAsset}/assets/search?`;
-          if (isPrinter) apiUrl += `type_name=Printer`;
-          else apiUrl += `employee_name=${encodeURIComponent(user!.name)}`;
-          try {
-            const res = await fetch(apiUrl);
-            return res.ok ? await res.json() : null;
-          } catch { return null; }
-        })()
+        let apiUrl = `${apiAsset}/assets/search?`;
+        if (isPrinter) apiUrl += `type_name=Printer`;
+        else apiUrl += `employee_name=${encodeURIComponent(user!.name)}`;
+        try {
+          const res = await fetch(apiUrl);
+          return res.ok ? await res.json() : null;
+        } catch { return null; }
+      })()
       : Promise.resolve(null)
   ]);
 
@@ -311,7 +311,6 @@ export async function escalateToSupport(
     name: user.name,
     employeeId: user.employeeId,
     department: user.department,
-    email: user.email || 'ไม่ระบุ',
     phone: user.phone || 'ไม่ระบุ',
     issueSummary: issueSummary + hardwareDetails,
     category,
@@ -320,7 +319,7 @@ export async function escalateToSupport(
   await newTicket.save();
 
   if (adminGroupId) {
-    const adminMessage = `🚨 แจ้งเคสใหม่: ${ticketId}\n👤 ${user.name}\n📁 ${category}\n📝 ${issueSummary}${hardwareDetails}`;
+    const adminMessage = `🚨 แจ้งเคสใหม่: ${ticketId}\n👤 ${user.name} (${user.employeeId})\n🏢 ${user.department}\n📞 ${user.phone || 'ไม่ระบุ'}\n📝 ${issueSummary}${hardwareDetails}`;
     await messaging.pushText(adminGroupId, adminMessage);
   }
 
