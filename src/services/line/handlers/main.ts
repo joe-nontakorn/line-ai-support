@@ -368,14 +368,19 @@ export async function handleTextMessage(
     }
   }
 
-  const quickReplies = [{ label: '👤 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' }];
-  if (responseType === 'IT_PROBLEM') {
-    quickReplies.unshift({ label: '✅ แก้ได้แล้ว', text: 'แก้ได้แล้ว' });
-  } else if (responseType === 'IT_INFO') {
-    quickReplies.unshift({ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' });
-    quickReplies.unshift({ label: '📊 ให้คะแนนคำตอบ', text: 'ให้คะแนนคำตอบ' });
-  } else if (responseType === 'OUT_OF_SCOPE') {
-    quickReplies.unshift({ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' });
+  let quickReplies: any[] = [];
+  if (aiResponse.includes('it@jastel.co.th')) {
+    quickReplies = [{ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' }];
+  } else {
+    quickReplies = [{ label: '👤 ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' }];
+    if (responseType === 'IT_PROBLEM') {
+      quickReplies.unshift({ label: '✅ แก้ได้แล้ว', text: 'แก้ได้แล้ว' });
+    } else if (responseType === 'IT_INFO') {
+      quickReplies.unshift({ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' });
+      quickReplies.unshift({ label: '📊 ให้คะแนนคำตอบ', text: 'ให้คะแนนคำตอบ' });
+    } else if (responseType === 'OUT_OF_SCOPE') {
+      quickReplies.unshift({ label: '🚀 เริ่มสนทนาใหม่', text: 'เริ่มสนทนาใหม่' });
+    }
   }
 
   return messaging.replyTextWithQuickReply(replyToken, aiResponse, quickReplies);
