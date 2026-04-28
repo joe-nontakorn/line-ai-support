@@ -38,6 +38,14 @@ export async function handleFollow(
       );
     }
 
+    // 🚨 Block Inactive Users
+    if (user.isActive === false) {
+      return messaging.replyText(
+        replyToken,
+        '❌ ขออภัยครับ บัญชีของคุณถูกระงับการใช้งานเนื่องจากสถานะพนักงานไม่เป็นปกติ (Resigned) หากมีข้อผิดพลาดกรุณาติดต่อฝ่าย IT Support ครับ'
+      );
+    }
+
     return messaging.replyTextWithQuickReply(
       replyToken,
       `ยินดีต้อนรับกลับมาครับคุณ ${user.name}! มีปัญหาเรื่อง IT สอบถามเข้ามาได้เลยครับ 😊\n\n📌 สามารถแนบส่ง **รูปภาพแคปหน้าจอ** หรือ **ไฟล์ PDF/เอกสารต่าง ๆ** แจ้งปัญหาได้เลยครับ\n\nกรุณากดปุ่มเพื่อเริ่มสนทนาใหม่ 👇`,

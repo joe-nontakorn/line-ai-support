@@ -50,6 +50,7 @@ export async function handleRegistration(
           department: match.department_name || match.division_name || 'ไม่ระบุแผนก',
           email: match.email,
           phone: match.phone ? normalizePhone(match.phone) : undefined,
+          isActive: match.is_active,
         };
 
         const otp = Math.floor(100000 + Math.random() * 900000).toString();

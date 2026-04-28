@@ -10,6 +10,7 @@ export interface IUser extends Document {
   phone?: string;
   registeredAt: Date;
   isActive: boolean;
+  lastStatusCheck?: Date;
 }
 
 const userSchema = new Schema<IUser>({
@@ -46,6 +47,10 @@ const userSchema = new Schema<IUser>({
   isActive: {
     type: Boolean,
     default: true
+  },
+  lastStatusCheck: {
+    type: Date,
+    default: null
   }
 }, {
   timestamps: true

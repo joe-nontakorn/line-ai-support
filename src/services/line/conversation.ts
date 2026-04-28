@@ -137,6 +137,7 @@ export class ConversationService {
     department: string;
     email?: string;
     phone?: string;
+    isActive?: boolean;
   }): Promise<void> {
     const user = await User.findOneAndUpdate(
       { lineUserId: userId },
@@ -148,6 +149,8 @@ export class ConversationService {
           department: payload.department,
           email: payload.email,
           phone: payload.phone,
+          isActive: payload.isActive !== undefined ? payload.isActive : true,
+          lastStatusCheck: new Date(),
         },
       },
       {

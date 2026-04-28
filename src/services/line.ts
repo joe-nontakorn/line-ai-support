@@ -43,7 +43,7 @@ export class LineService {
 
     try {
       const user = await User.findOne({ lineUserId: userId });
-
+      
       // 🚨 Registration Flow
       if (!user) {
         if (message.type !== 'text') {
@@ -58,6 +58,32 @@ export class LineService {
           }
         }
         return registrationHandlers.handleRegistration(replyToken, userId, (message as TextEventMessage).text, this.messaging, this.registration, this.conversation);
+      }
+
+      // 🚨 Sync Active Status from External API (Throttle: once every 12 hours)
+      const TWELVE_HOURS = 12 * 60 * 60 * 1000;
+      const lastCheck = user.lastStatusCheck ? new Date(user.lastStatusCheck).getTime() : 0;
+      
+      if (Date.now() - lastCheck > TWELVE_HOURS) {
+        try {
+          const employeeData = await this.registration.validateEmployee(user.employeeId);
+          if (employeeData) {
+            user.isActive = employeeData.is_active;
+            user.lastStatusCheck = new Date();
+            await user.save();
+            logger.info(`Synced isActive for user ${user.employeeId}: ${user.isActive}`);
+          }
+        } catch (err) {
+          logger.error(`Error syncing user status for ${user.employeeId}:`, err);
+        }
+      }
+
+      // 🚨 Block Inactive Users (Resigned)
+      if (user.isActive === false) {
+        return this.messaging.replyText(
+          replyToken,
+          '❌ ขออภัยครับ บัญชีของคุณถูกระงับการใช้งานเนื่องจากสถานะพนักงานไม่เป็นปกติ (Resigned) หากมีข้อสงสัยกรุณาติดต่อฝ่าย IT Support ครับ'
+        );
       }
 
       // 🚨 Special Status Handlers
