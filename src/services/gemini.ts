@@ -840,16 +840,22 @@ export class GeminiService {
     await this.analysisSemaphore.acquire();
     try {
       return await this.retryWithBackoff(async () => {
-        const userMessages = conversationHistory
-          .filter((msg) => msg.role === 'user')
-          .map((msg) => this.sanitizeText(msg.content))
-          .filter(Boolean);
+        // ดึงทั้งข้อความ user และ assistant เพื่อให้ AI เห็นบริบทเต็ม (รวมผลวิเคราะห์รูปภาพ)
+        const allMessages = conversationHistory
+          .filter((msg) => msg.role === 'user' || msg.role === 'assistant')
+          .map((msg) => ({ role: msg.role, content: this.sanitizeText(msg.content) }))
+          .filter((msg) => msg.content.length > 0);
 
-        if (userMessages.length === 0) {
+        const userMessages = allMessages.filter(m => m.role === 'user');
+
+        if (allMessages.length === 0) {
           return { issueSummary: 'ไม่สามารถสรุปปัญหาได้', category: 'Uncategorized', subCategory: 'Other', isITRelated: true, clarificationNeeded: null };
         }
 
-        let messages = userMessages.join('\n');
+        // จัดรูปแบบบทสนทนาแบบเห็นบทบาทชัดเจน
+        let messages = allMessages
+          .map(m => `[${m.role === 'user' ? 'ผู้ใช้' : 'AI'}]: ${m.content}`)
+          .join('\n');
         if (messages.length > this.maxIssueAnalysisChars) {
           messages = messages.slice(-this.maxIssueAnalysisChars);
         }
@@ -861,7 +867,11 @@ ${messages}
 
 กติกาการตอบ:
 1. วิเคราะห์ว่าเป็นปัญหาที่เกี่ยวข้องกับ IT หรือไม่ (ถ้าไม่เกี่ยวให้ isITRelated เป็น false)
-2. สรุปปัญหาหลักเป็นภาษาไทยอย่างกระชับแต่ครบถ้วน (issueSummary)
+2. สรุปปัญหาหลักเป็นภาษาไทยอย่างกระชับแต่ครบถ้วน ใน issueSummary
+   - ⚠️ issueSummary ต้องเป็น "ข้อความภาษาไทยที่อ่านรู้เรื่อง" ไม่ใช่ JSON, ไม่ใช่ code
+   - ห้ามเขียนว่า "ผู้ใช้แจ้งปัญหาผ่านรูปภาพแต่ยังไม่มีการระบุรายละเอียดของปัญหา" ถ้าในบทสนทนามีข้อมูลใดๆ ให้สรุปออกมาให้ได้
+   - ตัวอย่างที่ดี: "เปิด email ไม่ได้ ระบบแจ้ง Error 404 บนเครื่อง Laptop"
+   - ตัวอย่างที่ไม่ดี: "ผู้ใช้แจ้งปัญหาแต่ยังไม่มีรายละเอียด"
 3. จัดหมวดหมู่หลัก (category) และหมวดหมู่ย่อย (subCategory) เป็นภาษาอังกฤษ
 4. หากข้อมูลที่ผู้ใช้ให้มา "สั้นเกินไป" หรือ "ไม่ชัดเจน" จนเจ้าหน้าที่จะทำงานลำบาก (เช่น พิมพ์แค่ "ช่วยด้วย", "เข้าไม่ได้") ให้ระบุคำถามที่ควรจะถามต่อในช่อง (clarificationNeeded) หากข้อมูลชัดเจนแล้วให้เป็น null
 
@@ -871,7 +881,7 @@ ${messages}
 ตอบเป็น JSON เท่านั้น:
 {
   "isITRelated": true,
-  "issueSummary": "สรุปปัญหาที่พบ...",
+  "issueSummary": "สรุปปัญหาที่พบเป็นข้อความภาษาไทยที่อ่านรู้เรื่อง",
   "category": "Main Category",
   "subCategory": "Sub Category",
   "clarificationNeeded": "รบกวนระบุ... เพิ่มเติมครับ" หรือ null
@@ -902,9 +912,18 @@ ${messages}
               subCategory: obj.subCategory || 'Other',
               clarificationNeeded: obj.clarificationNeeded || null
             };
-          } catch { }
+          } catch {
+            // JSON parse failed — ดึง issueSummary จาก text ดิบ (ป้องกันส่ง JSON ดิบเข้า Ticket)
+            const summaryMatch = cleaned.match(/"issueSummary"\s*:\s*"([^"]+)"/i);
+            if (summaryMatch?.[1]) {
+              return { issueSummary: summaryMatch[1], category: 'Uncategorized', subCategory: 'Other', isITRelated: true, clarificationNeeded: null };
+            }
+          }
         }
-        return { issueSummary: text || 'ไม่สามารถสรุปปัญหาได้', category: 'Uncategorized', subCategory: 'Other', isITRelated: true, clarificationNeeded: null };
+        // Fallback สุดท้าย: ใช้ข้อความที่ user พิมพ์มาจริง
+        const lastUserMsg = userMessages[userMessages.length - 1];
+        const fallbackSummary = lastUserMsg?.content || 'ไม่สามารถสรุปปัญหาได้';
+        return { issueSummary: fallbackSummary, category: 'Uncategorized', subCategory: 'Other', isITRelated: true, clarificationNeeded: null };
       });
     } catch (error) {
       logger.error('Gemini analyze and categorize error', error);

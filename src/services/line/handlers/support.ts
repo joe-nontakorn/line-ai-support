@@ -153,6 +153,25 @@ export async function escalateToSupport(
   isItRelated = aiResult.isITRelated;
   clarificationNeeded = aiResult.clarificationNeeded;
 
+  // 🛡️ Safety: ป้องกัน issueSummary เป็น JSON ดิบหลุดเข้า Ticket
+  if (issueSummary && (issueSummary.trim().startsWith('{') || issueSummary.trim().startsWith('```'))) {
+    try {
+      const cleaned = issueSummary.replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(cleaned);
+      if (parsed.issueSummary) {
+        issueSummary = parsed.issueSummary;
+        if (parsed.category) category = parsed.category;
+        if (parsed.subCategory) subCategory = parsed.subCategory;
+      }
+    } catch {
+      // ดึง issueSummary จาก regex แทน
+      const match = issueSummary.match(/"issueSummary"\s*:\s*"([^"]+)"/i);
+      if (match?.[1]) {
+        issueSummary = match[1];
+      }
+    }
+  }
+
   // 🛡️ Fallback chain
   if (issueSummary === 'ไม่ระบุ' || issueSummary === 'ไม่สามารถสรุปปัญหาได้') {
     if (conversationToUpdate.issue && conversationToUpdate.issue !== 'ไม่ระบุ') {
