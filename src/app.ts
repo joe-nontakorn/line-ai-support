@@ -5,7 +5,7 @@ import { Client } from '@line/bot-sdk';
 import connectDB from './config/mongodb.js';
 import { LineService } from './services/line.js';
 import { lineClient } from './services/line/client.js';
-import apiRoutes from './routes/api.js';
+import mainRouter from './routes/mainRouter.js';
 import cors from 'cors';
 import { logger } from './utils/logger.js';
 import { ensureUploadDir, getUploadDir } from './utils/storage.js';
@@ -116,7 +116,7 @@ app.get('/', (req: Request, res: Response) => {
 });
 
 // API Routes
-app.use('/api', apiRoutes);
+app.use('/api', mainRouter);
 
 // Static files (Uploads)
 app.use('/uploads', express.static(getUploadDir()));
