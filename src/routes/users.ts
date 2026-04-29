@@ -10,11 +10,7 @@ const router = express.Router();
  */
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 15;
     const search = req.query.search as string;
-    const skip = (page - 1) * limit;
-
     const filter: any = {};
     if (search) {
       // Escape special regex characters to avoid issues with search terms
@@ -36,8 +32,6 @@ router.get('/', async (req: Request, res: Response) => {
     const [users, total] = await Promise.all([
       User.find(filter)
         .sort({ registeredAt: -1 })
-        .skip(skip)
-        .limit(limit)
         .lean(),
       User.countDocuments(filter)
     ]);
@@ -50,10 +44,10 @@ router.get('/', async (req: Request, res: Response) => {
         users,
         pagination: {
           total,
-          limit,
-          page,
-          totalPages: Math.ceil(total / limit),
-          hasMore: skip + users.length < total
+          limit: users.length,
+          page: 1,
+          totalPages: 1,
+          hasMore: false
         }
       }
     });
