@@ -1,6 +1,6 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
-export type NotificationType = "new_user" | "resolved_ticket";
+export type NotificationType = "new_user" | "resolved_ticket" | "new_ticket";
 
 export interface INotification extends Document {
   type: NotificationType;
@@ -12,7 +12,7 @@ export interface INotification extends Document {
 }
 
 const NotificationSchema: Schema = new Schema({
-  type: { type: String, enum: ["new_user", "resolved_ticket"], required: true },
+  type: { type: String, enum: ["new_user", "resolved_ticket", "new_ticket"], required: true },
   title: { type: String, required: true },
   content: { type: String, required: true },
   timestamp: { type: Date, default: Date.now },

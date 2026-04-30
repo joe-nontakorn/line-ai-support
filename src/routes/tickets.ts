@@ -174,10 +174,10 @@ router.put('/:ticketId/status', upload.array('files', 5), async (req: Request, r
       lineMessages.push({ type: 'text', text: message });
     } else if (status === 'waiting_user_confirm') {
       message = 
-        `🛠️ เจ้าหน้าที่แจ้งแก้ไขงานเรียบร้อยแล้ว!${staffLabel}\n\n` +
+        `🛠️ เจ้าหน้าที่ได้ดำเนินการแก้ไขปัญหาเรียบร้อยแล้ว!${staffLabel}\n\n` +
         `🎫 Ticket: ${ticket.ticketId}\n` +
         `📝 ปัญหา: ${ticket.issueSummary}\n\n` +
-        `✅ วิธีแก้: ${resolutionComment || 'ดำเนินการแก้ไขเรียบร้อย'}\n\n` +
+        `✅ วิธีแก้: ${resolutionComment || 'ดำเนินการแก้ไขปัญหาเรียบร้อย'}\n\n` +
         `กรุณายืนยันว่าปัญหาได้รับการแก้ไขแล้วหรือไม่ครับ? 👇`;
       
       const quickReply = {
@@ -285,7 +285,7 @@ router.put('/:ticketId/status', upload.array('files', 5), async (req: Request, r
     if (status === 'resolved' || status === 'waiting_user_confirm') {
       await Notification.create({
         type: 'resolved_ticket',
-        title: 'แก้ไขเคสสำเร็จ',
+        title: 'ดำเนินการแก้ไขปัญหาสำเร็จ',
         content: `${ticket.issueSummary.split('\n')[0]}\nผู้แจ้ง: ${ticket.name}`,
         metadata: { ticketId: ticket.ticketId, _id: ticket._id },
         timestamp: new Date()

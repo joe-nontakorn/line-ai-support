@@ -5,6 +5,7 @@ import { ConversationService } from '../conversation.js';
 import { ConversationDoc } from '../types.js';
 import geminiService from '../../gemini.js';
 import Ticket from '../../../models/Ticket.js';
+import Notification from '../../../models/Notification.js';
 import { logger } from '../../../utils/logger.js';
 
 const apiAsset = process.env.API_ASSET || 'http://172.16.1.16:3000/api';
@@ -337,6 +338,15 @@ export async function escalateToSupport(
     subCategory
   });
   await newTicket.save();
+  
+  // --- สร้าง Notification สำหรับ Dashboard ---
+  await Notification.create({
+    type: 'new_ticket',
+    title: 'มี Ticket ใหม่เข้ามา',
+    content: `${user.name} แจ้งปัญหา: ${issueSummary}`,
+    metadata: { ticketId: newTicket.ticketId, mongoId: newTicket._id },
+    timestamp: new Date()
+  });
 
   if (adminGroupId) {
     const adminMessage = `🚨 แจ้งเคสใหม่: ${ticketId}\n👤 ${user.name} (${user.employeeId})\n🏢 ${user.department}\n📞 ${user.phone || 'ไม่ระบุ'}\n📝 ${issueSummary}${hardwareDetails}`;

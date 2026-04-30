@@ -249,7 +249,7 @@ sequenceDiagram
 
     API->>MS: pushMultipleMessages()
     MS->>L: ส่งข้อความ + ไฟล์แนบ + QuickReply
-    L->>U: "เจ้าหน้าที่แก้ไขเรียบร้อย"<br/>+ ปุ่ม "ใช่" / "ยังพบปัญหา"
+    L->>U: "เจ้าหน้าที่ดำเนินการแก้ไขปัญหาเรียบร้อยแล้ว"<br/>+ ปุ่ม "ใช่" / "ยังพบปัญหา"
     API-->>A: 200 OK
 
     alt User ยืนยันแก้ไขสำเร็จ
@@ -312,7 +312,7 @@ stateDiagram-v2
 
     pending --> in_progress: Admin กดรับเรื่อง<br/>(Dashboard)
     
-    in_progress --> waiting_user_confirm: Admin แจ้งแก้ไขเสร็จ<br/>+ ส่งไฟล์แนบ (ถ้ามี)
+    in_progress --> waiting_user_confirm: Admin ดำเนินการแก้ไขเสร็จสิ้น<br/>+ ส่งไฟล์แนบ (ถ้ามี)
     in_progress --> resolved: Admin ปิดเคสตรง
 
     waiting_user_confirm --> resolved: User ยืนยัน<br/>"ใช่ แก้ไขแล้ว ✅"
