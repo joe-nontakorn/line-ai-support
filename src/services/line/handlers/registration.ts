@@ -4,6 +4,7 @@ import { MessagingService } from '../messaging.js';
 import { RegistrationService } from '../registration.js';
 import { ConversationService } from '../conversation.js';
 import { normalizePhone } from '../utils.js';
+import { OTP_EXPIRY_MINUTES } from '../constants.js';
 import { logger } from '../../../utils/logger.js';
 
 export async function handleRegistration(
@@ -63,13 +64,13 @@ export async function handleRegistration(
         registration.setState(userId, {
           step: 2,
           otp,
-          otpExpiresAt: Date.now() + 5 * 60 * 1000,
+          otpExpiresAt: Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000,
           tempPayload: payload,
         });
 
         return messaging.replyText(
           replyToken,
-          `✉️ ระบบได้ส่งรหัส OTP 6 หลักไปที่อีเมล **${match.email}** เรียบร้อยแล้ว\n\nกรุณานำรหัส OTP มาพิมพ์ตอบกลับภายใน 5 นาทีครับ\n\n(หากต้องการยกเลิก ให้พิมพ์ "ยกเลิก")`
+          `✉️ ระบบได้ส่งรหัส OTP 6 หลักไปที่อีเมล **${match.email}** เรียบร้อยแล้ว\n\nกรุณานำรหัส OTP มาพิมพ์ตอบกลับภายใน ${OTP_EXPIRY_MINUTES} นาทีครับ\n\n(หากต้องการยกเลิก ให้พิมพ์ "ยกเลิก")`
         );
       } else {
         return messaging.replyText(
@@ -96,7 +97,7 @@ export async function handleRegistration(
 
     if (Date.now() > state.otpExpiresAt) {
       registration.setState(userId, { step: 1 });
-      return messaging.replyText(replyToken, '❌ รหัส OTP หมดอายุการใช้งานแล้ว (เกิน 5 นาที)\n\nกรุณาลงทะเบียนเพื่อเริ่มใช้งาน โดยใส่รหัสพนักงาน เช่น **1234** หรือ **Email** อย่างใดอย่างหนึ่ง เพื่อให้ระบบตรวจสอบครับ:');
+      return messaging.replyText(replyToken, `❌ รหัส OTP หมดอายุการใช้งานแล้ว (เกิน ${OTP_EXPIRY_MINUTES} นาที)\n\nกรุณาลงทะเบียนเพื่อเริ่มใช้งาน โดยใส่รหัสพนักงาน เช่น **1234** หรือ **Email** อย่างใดอย่างหนึ่ง เพื่อให้ระบบตรวจสอบครับ:`);
     }
 
     if (text.trim() !== state.otp) {

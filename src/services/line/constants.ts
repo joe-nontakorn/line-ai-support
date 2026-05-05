@@ -1,5 +1,6 @@
 // src/services/line/constants.ts
 export const REGISTRATION_TTL_MS = 30 * 60 * 1000;
+export const OTP_EXPIRY_MINUTES = 5;
 export const MAX_LINE_TEXT_LENGTH = 4500;
 export const LOADING_SECONDS = 20;
 

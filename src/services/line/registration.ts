@@ -4,7 +4,7 @@ import dns from 'node:dns';
 import path from 'path';
 import User from '../../models/User.js';
 import { RegistrationState } from './types.js';
-import { REGISTRATION_TTL_MS } from './constants.js';
+import { REGISTRATION_TTL_MS, OTP_EXPIRY_MINUTES } from './constants.js';
 import { fetchWithTimeout, normalizePhone } from './utils.js';
 import { logger } from '../../utils/logger.js';
 
@@ -112,8 +112,8 @@ export class RegistrationService {
                       </table>
                       
                       <div style="margin-bottom: 40px; text-align: center;">
-                        <p style="margin-bottom: 8px; line-height: 1.6; font-size: 14px; color: #64748b;">⚠️ รหัสนี้จะหมดอายุภายใน 5 นาที</p>
-                        <p style="margin: 0; line-height: 1.6; font-size: 14px; color: #64748b;">⚠️ This code will expire in 5 minutes.</p>
+                        <p style="margin-bottom: 8px; line-height: 1.6; font-size: 14px; color: #64748b;">⚠️ รหัสนี้จะหมดอายุภายใน ${OTP_EXPIRY_MINUTES} นาที</p>
+                        <p style="margin: 0; line-height: 1.6; font-size: 14px; color: #64748b;">⚠️ This code will expire in ${OTP_EXPIRY_MINUTES} minutes.</p>
                       </div>
 
                       <!-- Alert Box Table -->
