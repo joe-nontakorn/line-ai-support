@@ -282,7 +282,7 @@ router.put('/:ticketId/status', upload.array('files', 5), async (req: Request, r
     }
 
     // --- สร้าง Notification สำหรับ Dashboard ---
-    if (status === 'resolved' || status === 'waiting_user_confirm') {
+    if ((status === 'resolved' || status === 'waiting_user_confirm') && (oldStatus !== 'resolved' && oldStatus !== 'waiting_user_confirm')) {
       await Notification.create({
         type: 'resolved_ticket',
         title: 'ดำเนินการแก้ไขปัญหาสำเร็จ',
