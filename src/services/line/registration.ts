@@ -106,7 +106,7 @@ export class RegistrationService {
                         <tr>
                           <td align="center" style="background-color: #f8fafc; padding: 40px; border-radius: 20px; border: 2px solid #e2e8f0;">
                             <div style="font-size: 13px; color: #64748b; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 16px; font-weight: 700;">Your Security Code / รหัสความปลอดภัยของคุณ</div>
-                            <div style="font-family: 'Monaco', 'Consolas', monospace; font-size: 38px; font-weight: 900; letter-spacing: 8px; color: #0369A1;">${otp.split('').join(' ')}</div>
+                            <div style="font-family: 'Monaco', 'Consolas', monospace; font-size: 32px; font-weight: 900; letter-spacing: 4px; color: #0369A1;">${otp}</div>
                           </td>
                         </tr>
                       </table>
