@@ -1,3 +1,4 @@
+// src/models/Ticket.ts
 import mongoose, { Schema, Document } from 'mongoose';
 
 // สถานะของ Ticket
@@ -60,10 +61,10 @@ const TicketSchema: Schema = new Schema({
   issueSummary: { type: String, required: true },
   category: { type: String, default: 'Uncategorized' },
   subCategory: { type: String, default: 'Other' },
-  status: { 
-    type: String, 
-    enum: ['pending', 'in_progress', 'waiting_user_confirm', 'resolved'], 
-    default: 'pending' 
+  status: {
+    type: String,
+    enum: ['pending', 'in_progress', 'waiting_user_confirm', 'resolved'],
+    default: 'pending'
   },
   statusHistory: { type: [StatusHistorySchema], default: [] },
   resolutionComment: { type: String, default: '' },

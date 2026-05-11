@@ -299,4 +299,27 @@ router.put('/:ticketId/status', upload.array('files', 5), async (req: Request, r
   }
 });
 
+/**
+ * DELETE /api/tickets/:ticketId - ลบ Ticket ตาม ticketId
+ */
+router.delete('/:ticketId', async (req: Request, res: Response) => {
+  try {
+    const { ticketId } = req.params;
+
+    const ticket = await Ticket.findOneAndDelete({ ticketId });
+    if (!ticket) {
+      return res.status(404).json({ success: false, error: 'Ticket not found' });
+    }
+
+    // ลบ Notification ที่เกี่ยวข้องกับ Ticket นี้ด้วย
+    await Notification.deleteMany({ 'metadata.ticketId': ticketId });
+
+    logger.info(`Ticket ${ticketId} deleted successfully`);
+    res.json({ success: true, message: 'Ticket deleted successfully', results: 1, data: { ticketId } });
+  } catch (error) {
+    logger.error('Error deleting ticket:', error);
+    res.status(500).json({ success: false, error: 'Failed to delete ticket' });
+  }
+});
+
 export default router;
