@@ -19,6 +19,13 @@ class AIProviderFactory {
     this.currentProviderName = (process.env.AI_PROVIDER || this.DEFAULT_PROVIDER).toLowerCase();
     this.currentModel = process.env.AI_MODEL || this.DEFAULT_MODEL;
 
+    // Create a temporary default provider instance (will be replaced from DB if available)
+    if (this.currentProviderName === 'openrouter') {
+      this.currentProvider = new OpenRouterService('temp-key', this.currentModel);
+    } else {
+      this.currentProvider = new GeminiService('temp-key', this.currentModel);
+    }
+
     logger.info(`[AIProviderFactory] Initialized with provider: ${this.currentProviderName}, model: ${this.currentModel}`);
   }
 
@@ -161,13 +168,12 @@ export function getAIProviderFactory(): AIProviderFactory {
 export async function initializeAIProvider(): Promise<void> {
   const factory = getAIProviderFactory();
 
-  // Always load from DB (no env fallback)
   try {
     await factory.loadConfigFromDB();
     logger.info('[AIProviderFactory] Successfully loaded AI configuration from database');
   } catch (error) {
-    logger.error('[AIProviderFactory] Failed to load AI configuration from database:', error);
-    logger.error('[AIProviderFactory] Please ensure there is an active AI configuration in the database');
-    throw new Error('AI configuration not found in database. Please set up an active configuration first.');
+    logger.warn('[AIProviderFactory] No active AI configuration in database. Using fallback provider.');
+    logger.warn('[AIProviderFactory] Please set up AI configuration in Settings page at /line-support/settings');
+    // App will continue with default provider - user can configure via web UI
   }
 }
