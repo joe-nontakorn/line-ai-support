@@ -6,14 +6,8 @@ import {
 } from '@google/generative-ai';
 import Ticket from '../models/Ticket.js';
 import { logger } from '../utils/logger.js';
-
-export type MessageRole = 'user' | 'assistant' | 'system';
-
-export interface IMessage {
-  role: MessageRole;
-  content: string;
-  timestamp?: Date;
-}
+import { buildSystemPrompt } from '../utils/systemPrompt.js';
+import { IAIProvider, IMessage, RequestContext, ParsedAIResponse, AIAnalysisResult, AnalysisResult } from './base-ai-provider.js';
 
 export type ParsedResponseType = 'IT_PROBLEM' | 'IT_INFO' | 'OUT_OF_SCOPE';
 
@@ -22,32 +16,17 @@ export interface GeminiAnalysisResult {
   response: string;
 }
 
-export interface ParsedGeminiResponse {
-  content: string;
-  type: ParsedResponseType;
-  topic?: string;
-}
-
 interface ChatJsonResponse {
   content: string;
   type: ParsedResponseType;
   topic?: string;
 }
 
-interface RequestContext {
-  userKey?: string;
-  userTicketsContext?: string;
-}
-
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const MODEL_NAME = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
 const CHAT_MAX_CONCURRENCY = Number(process.env.GEMINI_CHAT_MAX_CONCURRENCY || 10);
 const ANALYSIS_MAX_CONCURRENCY = Number(process.env.GEMINI_ANALYSIS_MAX_CONCURRENCY || 5);
 const USER_RATE_LIMIT_WINDOW_MS = Number(process.env.GEMINI_USER_RATE_LIMIT_WINDOW_MS || 60_000);
 const USER_RATE_LIMIT_MAX_REQUESTS = Number(process.env.GEMINI_USER_RATE_LIMIT_MAX_REQUESTS || 20);
 const USER_BUCKET_MAX_SIZE = Number(process.env.GEMINI_USER_BUCKET_MAX_SIZE || 5000);
-
-logger.info(`[Gemini] Using model: ${MODEL_NAME}`);
 
 const safetySettings = [
   {
@@ -71,62 +50,6 @@ const safetySettings = [
 // ──────────────────────────────────────────────
 // Load Company Security Policy (P-02)
 // ──────────────────────────────────────────────
-const COMPANY_POLICY = `
-# Information Security Regulations (P-02)
-## JasTel Network Co.,Ltd.
-
-## 1. ขอบข่าย (Scope)
-- ใช้กับพนักงาน, Supplier และบุคคลภายนอกที่เกี่ยวข้อง
-- ต้องปฏิบัติตามกฎหมายและข้อกำหนดที่เกี่ยวข้อง
-
-## 2. คำจำกัดความ
-- **สื่อบันทึกข้อมูลพกพา**: เช่น USB, External HDD, CD/DVD, Mobile, Notebook
-- **เครือข่าย**: ระบบ IT ของบริษัท
-
-## 3. การใช้งานทรัพยากรสารสนเทศ
-### แนวทางสำคัญ
-- ห้ามเข้าถึงข้อมูล/ระบบที่ไม่ได้รับอนุญาต
-- ห้ามให้บุคคลภายนอกใช้ระบบบริษัท
-- ห้ามใช้งานผิดกฎหมาย/ขัดนโยบายองค์กร
-- ต้องตั้ง Screen Lock ภายใน 5 นาที
-
-### Password Policy
-- ความยาว 8–12 ตัวอักษร
-- มีตัวใหญ่/เล็ก + ตัวเลข + อักขระพิเศษ
-- เปลี่ยนเมื่อถูก Hack (อ้างอิง NIST)
-
-### ข้อห้าม
-- ห้ามแชร์รหัสผ่าน
-- ห้ามติดตั้ง Software เอง (ต้องผ่าน ADS / Whitelist)
-- ห้ามใช้เครื่องมือ Hack เช่น sniffer / scanner
-- ห้ามเข้าถึงเว็บไซต์ไม่เหมาะสม
-
-## 4. การใช้งาน Email
-- ใช้ Email องค์กรเท่านั้น (Microsoft 365)
-- ข้อมูลที่ส่งออกต้องจัดชั้นความลับ (ISD-84)
-- Email ถูกบันทึกและตรวจสอบได้
-- IT มีสิทธิ์ตรวจสอบโดยไม่แจ้งล่วงหน้า
-
-## 5. การใช้งานสื่อบันทึกข้อมูลพกพา (BYOD)
-- ต้องขออนุญาตก่อนใช้อุปกรณ์ส่วนตัว
-- ต้องลงทะเบียนกับ ADS
-- ห้ามติดตั้ง/แก้ไข Software/Hardware เอง
-- ต้องมี Antivirus และอัปเดตเสมอ
-- หากอุปกรณ์หาย ต้องแจ้งทันที
-
-## 6. การจัดการข้อมูล (Information Asset)
-- เก็บข้อมูลในระบบที่บริษัทกำหนด (M365, SAP, Salesforce)
-- กำหนดสิทธิ์การเข้าถึงตามระดับความลับ
-
-## 7. การแลกเปลี่ยนข้อมูล
-- ต้องมี NDA (ข้อตกลงรักษาความลับ)
-- ต้อง Scan Virus ทุกครั้ง
-- ห้ามใช้ USB ส่งข้อมูลลับออกนอกองค์กร
-- แนะนำใช้ M365 เป็นหลัก
-`;
-
-logger.info('[Gemini] Company policy embedded successfully');
-
 // ฟังก์ชันสร้างข้อความแจ้งผู้ใช้เมื่อเกิด Error ของ AI
 function getAIErrorMessage(error: unknown): string {
   const err = error as { status?: number; message?: string };
@@ -143,70 +66,6 @@ function getAIErrorMessage(error: unknown): string {
   }
 
   return 'เกิดข้อผิดพลาดในการเชื่อมต่อกับเซิร์ฟเวอร์ AI';
-}
-
-// ──────────────────────────────────────────────
-// System Prompt: หัวใจของ AI IT Support
-// ──────────────────────────────────────────────
-const BASE_SYSTEM_PROMPT = `คุณชื่อ "Jastel IT Helper" เป็น AI ช่วยเหลือด้าน IT Support ของ Jastel Network
-หน้าที่หลักของคุณคือ: ให้คำแนะนำและช่วยแก้ไขปัญหาด้าน IT "เบื้องต้น" เท่านั้น รวมถึงอำนวยความสะดวกในการรวบรวมข้อมูลเพื่อเปิด Ticket ให้กับเจ้าหน้าที่
-
-ตอบเป็นภาษาไทย กระชับ อ่านง่ายบนมือถือ
-
-**สภาพแวดล้อมบริษัท:** พนักงานทุกคนใช้ Windows เท่านั้น (ไม่มี Mac) อีเมลใช้ Microsoft 365/Outlook เท่านั้น (ไม่ใช่ Gmail)
-
-**ขอบเขตงานเบื้องต้น:** คอมพิวเตอร์ Windows, เครือข่าย/Wi-Fi/VPN/LAN, Outlook/Teams/SharePoint, M365/SAP/ERP/Adobe, Printer/Scanner, บัญชีผู้ใช้/รหัสผ่าน, ไวรัส/Phishing, ฮาร์ดแวร์/ซอฟต์แวร์
-
-**ข้อมูลระบบภายใน (ห้ามตอบผิด):**
-- **172.16.1.16**: คือ Server ของระบบ Line Support / Dashboard (linesupport.jastel.internal) ไม่ใช่เครื่อง SAP หรือ Server อื่นๆ
-
-**กฎการตอบ:**
-1. ถ้าข้อมูลไม่ชัด ถามกลับก่อน (เช่น "ลืมรหัสผ่าน" → ถามว่าระบบอะไร)
-2. ตอบเป็นขั้นตอน 1,2,3 สั้นกระชับ แนะนำเฉพาะ Windows
-3. แจ้งปัญหา → ปิดท้าย "กดปุ่ม 'ติดต่อเจ้าหน้าที่' เพื่อแจ้ง IT"
-4. สอบถามข้อมูล → ปิดท้าย "สอบถามเพิ่มเติมหรือกดปุ่ม 'ติดต่อเจ้าหน้าที่' ได้เลยครับ"
-5. ถ้าต้อง Remote/เข้าระบบจริง → แนะนำติดต่อ IT Support
-6. คำถามนอกเรื่อง IT → "ขออภัยครับ อยู่นอกขอบเขต IT Support ครับ"
-7. หากคุณ (AI) ไม่มีข้อมูล ไม่สามารถตอบได้ หรือหาสาเหตุไม่เจอ ให้คุณวิเคราะห์สถานการณ์แบบฉลาดๆ พร้อมอธิบายให้ User ฟังตรงๆ ว่าทำไมคุณถึงตอบไม่ได้ แล้วจึงแนะนำให้ติดต่อเจ้าหน้าที่ IT (อย่าให้คำตอบมั่วๆ)
-8. **การเข้าถึงข้อมูล:** คุณได้รับอนุญาตให้เข้าถึงและแสดงข้อมูลจากประวัติ Ticket (Knowledge Base) ที่ระบบส่งให้ได้ รวมถึงเลข Ticket ID เพื่อใช้อ้างอิงแหล่งที่มา ห้ามปฏิเสธการตอบโดยอ้างเรื่องสิทธิ์การเข้าถึงหากระบบมีการส่งข้อมูลมาให้
-9. หากค้นหาในประวัติแล้วไม่พบข้อมูลที่เกี่ยวข้อง ให้แจ้งผู้ใช้ตามตรงว่า "ไม่พบประวัติการแก้ไขปัญหานี้ในระบบ" ห้ามอ้างว่าไม่มีสิทธิ์เข้าถึง
-10. ห้ามแนะนำ Software ผิดลิขสิทธิ์ ห้ามเปิดเผยข้อมูลส่วนตัวอื่นๆ นอกเหนือจากที่ปรากฏใน Ticket อ้างอิง
-11. **การจัดการสิทธิ์และเอกสารสำคัญ:** หากผู้ใช้ต้องการ **ขอสิทธิ์, แก้ไขสิทธิ์, หรือเปิดสิทธิ์การใช้งาน** ระบบต่างๆ (เช่น M365, SAP, Salesforce, VPN) หรือแจ้งปัญหาเกี่ยวกับ **เลขเอกสาร หรือการแก้ไขเอกสารต่างๆ** (เช่น Billing Item, SOF, การลงลายเซ็น) คุณต้องระบุเหตุผลและตอบว่า "เนื่องจากการดำเนินการดังกล่าวเกี่ยวข้องกับการกำหนดสิทธิ์และแก้ไขข้อมูลสำคัญในระบบ ซึ่งจำเป็นต้องมีการเก็บหลักฐานเพื่อใช้ในการ Audit (ตรวจสอบย้อนหลัง) รบกวนส่งอีเมลรายละเอียดแจ้งเรื่องไปที่ it@jastel.co.th เพื่อให้ทีมงานดำเนินการตรวจสอบและบันทึกข้อมูลเข้าระบบให้ถูกต้องตามระเบียบนะครับ" (ในกรณีนี้ **ห้าม** แนะนำให้กดปุ่มติดต่อเจ้าหน้าที่ เพราะต้องทำผ่านอีเมลเท่านั้น)
-12. **ข้อมูลส่วนบุคคลและข้อมูลภายใน:** หากผู้ใช้ถามข้อมูลที่เกี่ยวข้องกับความเป็นส่วนตัวหรือข้อมูลภายใน (เช่น "อีเมลนี้เป็นของใคร", "ขอเบอร์โทรพนักงานท่านอื่น") ให้ตอบสุภาพว่า "ขออภัยครับ ข้อมูลดังกล่าวเป็นข้อมูลส่วนบุคคลหรือข้อมูลภายในที่ไม่สามารถเปิดเผยผ่านช่องทางอัตโนมัติได้ หากมีความจำเป็นต้องตรวจสอบ รบกวนส่งอีเมลแจ้งเหตุผลและความต้องการไปที่ it@jastel.co.th เพื่อให้เจ้าหน้าที่ตรวจสอบตามระเบียบความปลอดภัยต่อไปครับ" (ห้ามแนะนำให้ติดต่อ HR)
-13. **การขอสิทธิ์เข้าใช้งานจากต่างประเทศ:** หากผู้ใช้แจ้งความประสงค์ขอเข้าใช้งานระบบต่างๆ เช่น **Microsoft 365 (M365), Email, SAP, Salesforce** หรือระบบอื่นๆ ในขณะที่ **อยู่ต่างประเทศ** หรือกำลังจะเดินทางไปต่างประเทศ ให้ย้ำกับผู้ใช้ชัดเจนว่า "เนื่องจากการดำเนินการดังกล่าวเป็นการให้สิทธิ์เข้าถึงข้อมูลจากต่างประเทศ ซึ่งเป็นเรื่องละเอียดอ่อนด้านความปลอดภัย รบกวนส่งอีเมลรายละเอียดแจ้งเรื่องไปที่ it@jastel.co.th เพื่อให้ทีมงานดำเนินการตรวจสอบและพิจารณาอนุมัติการเข้าถึงข้อมูลตามระเบียบนะครับ" (ห้ามแนะนำให้กดปุ่มติดต่อเจ้าหน้าที่)
-14. **ขอบเขตการช่วยเหลือ:** ย้ำกับตัวเองเสมอว่าคุณเป็นเพียง AI ช่วยเหลือเบื้องต้น หากปัญหาใดมีความซับซ้อน ต้องใช้สิทธิ์ผู้ดูแลระบบระดับสูง (Admin) หรือคุณวิเคราะห์แล้วว่าเกินความสามารถของ AI ให้แจ้งผู้ใช้ให้ "ติดต่อเจ้าหน้าที่" ทันทีเพื่อให้ปัญหาได้รับการแก้ไขอย่างถูกต้อง
-15. **การช่วยเหลือในการเขียนอีเมล:** เมื่อคุณแนะนำให้ผู้ใช้ส่งอีเมลไปที่ it@jastel.co.th (ตามกฎข้อ 11, 12, 13) ให้คุณเสนอตัวช่วย "ร่างเนื้อหาอีเมล" เบื้องต้นให้ผู้ใช้ตามข้อมูลที่ได้รับแจ้งมา เพื่อความสะดวกและรวดเร็วในการแจ้งเรื่องของพนักงาน
-
-**แท็ก (ต้องใส่ท้ายทุกคำตอบ):**
-- [[TYPE:IT_PROBLEM]] แก้ปัญหา IT
-- [[TYPE:IT_INFO]] ให้ข้อมูล/นโยบาย
-- [[TYPE:OUT_OF_SCOPE]] นอกขอบเขต
-- [[TOPIC:สรุปหัวข้อสั้นๆ]] เช่น [[TOPIC:ลืมรหัสผ่าน M365]]`;
-
-
-// ฟังก์ชันดึง System Prompt แบบไดนามิก - ป้องกันการโหลดไฟล์ Policy ทะลักเข้ามาทุกครั้ง เพื่อให้ AI ตอบเร็วขึ้น
-function getSystemPrompt(userInput: string = ''): string {
-  const needsPolicy = /นโยบาย|กฎ|ระเบียบ|ข้อบังคับ|policy|รหัสผ่าน|password|vpn|ความปลอดภัย|security|byod|software|usb/i.test(
-    userInput,
-  );
-
-  if (needsPolicy && COMPANY_POLICY) {
-    return (
-      BASE_SYSTEM_PROMPT +
-      `\n\n═══════════════════════════════════════
-📜 กฎระเบียบและความปลอดภัยสารสนเทศของบริษัท (Company Policy):
-คุณต้องยึดถือข้อมูลจากไฟล์นโยบายนี้เป็นหลัก หากมีข้อมูลทั่วไปขัดแย้งกับเอกสารนี้ ให้ยึดตามนโยบายบริษัทเท่านั้น
-${COMPANY_POLICY}
-═══════════════════════════════════════
-
-📌 คำสั่งพิเศษ:
-- ข้อมูลนโยบายนี้ใช้เป็นข้อเท็จจริงของบริษัท
-- ห้ามแนะนำสิ่งที่ขัดต่อนโยบายนี้
-- หากจำเป็นต้องใช้สิทธิ์ Admin, Remote access, หรือการแก้ไขโดยเจ้าหน้าที่ ให้แจ้งอย่างตรงไปตรงมา`
-    );
-  }
-
-  return BASE_SYSTEM_PROMPT;
 }
 
 class Semaphore {
@@ -304,7 +163,7 @@ class SlidingWindowRateLimiter {
   }
 }
 
-export class GeminiService {
+export class GeminiService implements IAIProvider {
   private readonly chatSemaphore = new Semaphore(CHAT_MAX_CONCURRENCY);
   private readonly analysisSemaphore = new Semaphore(ANALYSIS_MAX_CONCURRENCY);
   private readonly perUserLimiter = new SlidingWindowRateLimiter(
@@ -321,22 +180,29 @@ export class GeminiService {
   private genAI?: GoogleGenerativeAI;
   private model?: GenerativeModel;
   private visionModel?: GenerativeModel;
+  private apiKey: string;
+  private modelName: string;
+
+  constructor(apiKey?: string, modelName?: string) {
+    this.apiKey = apiKey || '';
+    this.modelName = modelName || 'gemini-2.5-flash-lite';
+  }
 
   private ensureClient(): void {
-    if (!GEMINI_API_KEY) {
+    if (!this.apiKey) {
       throw new Error('Missing GEMINI_API_KEY');
     }
 
     if (!this.genAI) {
-      this.genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+      this.genAI = new GoogleGenerativeAI(this.apiKey);
     }
 
     if (!this.model) {
-      this.model = this.genAI.getGenerativeModel({ model: MODEL_NAME });
+      this.model = this.genAI.getGenerativeModel({ model: this.modelName });
     }
 
     if (!this.visionModel) {
-      this.visionModel = this.genAI.getGenerativeModel({ model: MODEL_NAME });
+      this.visionModel = this.genAI.getGenerativeModel({ model: this.modelName });
     }
   }
 
@@ -383,12 +249,12 @@ export class GeminiService {
     return cleaned || undefined;
   }
 
-  private formatChatResponse(parsed: ParsedGeminiResponse): string {
+  private formatChatResponse(parsed: ParsedAIResponse): string {
     const topicTag = parsed.topic ? ` [[TOPIC:${parsed.topic}]]` : '';
     return `${parsed.content} [[TYPE:${parsed.type}]]${topicTag}`;
   }
 
-  private tryParseJsonResponse(text: string): ParsedGeminiResponse | null {
+  private tryParseJsonResponse(text: string): ParsedAIResponse | null {
     const trimmed = text.trim();
 
     const candidates = [trimmed];
@@ -415,7 +281,7 @@ export class GeminiService {
     return null;
   }
 
-  parseResponse(aiResponse: string): ParsedGeminiResponse {
+  parseResponse(aiResponse: string): ParsedAIResponse {
     const jsonParsed = this.tryParseJsonResponse(aiResponse);
     if (jsonParsed) {
       return jsonParsed;
@@ -571,8 +437,8 @@ export class GeminiService {
     }
   }
 
-  private createChatPrompt(userInput: string, searchContext: string, userTicketsContext?: string): string {
-    let prompt = `${getSystemPrompt(userInput)}${searchContext}`;
+  private createChatPrompt(searchContext: string, userTicketsContext?: string): string {
+    let prompt = `${buildSystemPrompt()}${searchContext}`;
 
     if (userTicketsContext) {
       prompt += '\n\n═══════════════════════════════════════\n';
@@ -634,7 +500,7 @@ export class GeminiService {
           history: [
             {
               role: 'user',
-              parts: [{ text: this.createChatPrompt(lastMessage.content, searchContext, context?.userTicketsContext) }],
+              parts: [{ text: this.createChatPrompt(searchContext, context?.userTicketsContext) }],
             },
             {
               role: 'model',
@@ -707,7 +573,7 @@ export class GeminiService {
     await this.analysisSemaphore.acquire();
     try {
       return await this.retryWithBackoff(async () => {
-        let prompt = `${getSystemPrompt(userText || '')}
+        let prompt = `${buildSystemPrompt()}
 
 คุณได้รับรูปภาพจาก user ที่เกี่ยวข้องกับปัญหา IT`;
         if (userText) {
@@ -778,7 +644,7 @@ export class GeminiService {
     try {
       return await this.retryWithBackoff(async () => {
         const safeFileName = this.sanitizeText(fileName).slice(0, 200);
-        const prompt = `${getSystemPrompt(safeFileName)}
+        const prompt = `${buildSystemPrompt()}
 
 คุณได้รับไฟล์ PDF ชื่อ "${safeFileName}" จาก user ที่เกี่ยวข้องกับปัญหา IT
 

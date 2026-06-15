@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import Conversation from '../../models/Conversation.js';
 import User from '../../models/User.js';
 import Notification from '../../models/Notification.js';
-import geminiService from '../gemini.js';
+import { getAIProviderFactory } from '../ai-provider-factory.js';
 import { ConversationDoc, ConversationStatus, ConversationMessage } from './types.js';
 import { getBangkokDateKey, now, sanitizeFreeText } from './utils.js';
 import { logger } from '../../utils/logger.js';
@@ -104,7 +104,9 @@ export class ConversationService {
 
   async analyzeIssueSafe(messages: ConversationMessage[]): Promise<string> {
     try {
-      const result = await geminiService.analyzeAndCategorizeIssue(messages);
+      const factory = getAIProviderFactory();
+      const aiProvider = factory.getProvider();
+      const result = await aiProvider.analyzeAndCategorizeIssue(messages);
       return result.issueSummary;
     } catch (error) {
       logger.error('Error analyzing issue:', error);
@@ -114,13 +116,15 @@ export class ConversationService {
 
   async analyzeAndCategorizeSafe(messages: ConversationMessage[]) {
     try {
-      return await geminiService.analyzeAndCategorizeIssue(messages);
+      const factory = getAIProviderFactory();
+      const aiProvider = factory.getProvider();
+      return await aiProvider.analyzeAndCategorizeIssue(messages);
     } catch (error) {
       logger.error('Error analyzing and categorizing issue:', error);
-      return { 
-        issueSummary: 'ไม่สามารถสรุปปัญหาได้', 
-        category: 'Uncategorized', 
-        subCategory: 'Other', 
+      return {
+        issueSummary: 'ไม่สามารถสรุปปัญหาได้',
+        category: 'Uncategorized',
+        subCategory: 'Other',
         isITRelated: true,
         clarificationNeeded: null
       };

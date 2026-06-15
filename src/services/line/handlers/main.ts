@@ -5,11 +5,27 @@ import { ConversationService } from '../conversation.js';
 import { RegistrationService } from '../registration.js';
 import { GREETING_KEYWORDS, ESCALATE_KEYWORDS } from '../constants.js';
 import { handleRating, promptForRating, promptForEscalationIssue, escalateToSupport } from './support.js';
-import geminiService from '../../gemini.js';
+import { getAIProviderFactory } from '../../ai-provider-factory.js';
 import { LOADING_SECONDS } from '../constants.js';
 import Ticket from '../../../models/Ticket.js';
 
 const apiAsset = process.env.API_ASSET || 'http://172.16.1.16:3000/api';
+
+// Helper function to parse AI response when provider doesn't have parseResponse method
+function parseResponseFallback(aiResponse: string) {
+  const typeMatch = aiResponse.match(/\[\[TYPE:(.*?)\]\]/i);
+  const topicMatch = aiResponse.match(/\[\[TOPIC:(.*?)\]\]/i);
+  const content = aiResponse
+    .replace(/\[\[TYPE:.*?\]\]/gi, '')
+    .replace(/\[\[TOPIC:.*?\]\]/gi, '')
+    .trim();
+
+  return {
+    content: content || 'ขออภัยครับ ไม่สามารถสร้างคำตอบได้ในขณะนี้',
+    type: (typeMatch?.[1] || 'IT_PROBLEM').toUpperCase() as 'IT_PROBLEM' | 'IT_INFO' | 'OUT_OF_SCOPE',
+    topic: topicMatch?.[1],
+  };
+}
 
 export async function handleFollow(
   event: FollowEvent,
@@ -361,11 +377,16 @@ export async function handleTextMessage(
     }
   }
 
-  const aiResponseRaw = await geminiService.chat(conversation.messages, { 
+  const factory = getAIProviderFactory();
+  const aiProvider = factory.getProvider();
+  const aiResponseRaw = await aiProvider.chat(conversation.messages, {
     userKey: userId,
     userTicketsContext: userTicketsContext || 'ไม่พบประวัติ Ticket ของคุณในระบบ'
   });
-  const { content: aiResponse, type: responseType, topic: responseTopic } = geminiService.parseResponse(aiResponseRaw);
+
+  const { content: aiResponse, type: responseType, topic: responseTopic } = (aiProvider as any).parseResponse
+    ? (aiProvider as any).parseResponse(aiResponseRaw)
+    : parseResponseFallback(aiResponseRaw);
 
   await conversationService.appendAssistantMessage(conversation, aiResponse);
 

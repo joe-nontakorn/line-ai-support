@@ -2,7 +2,7 @@ import { Client, ImageEventMessage, FileEventMessage, MessageAPIResponseBase } f
 import { MessagingService } from '../messaging.js';
 import { ConversationService } from '../conversation.js';
 import { streamToBuffer } from '../utils.js';
-import geminiService from '../../gemini.js';
+import { getAIProviderFactory } from '../../ai-provider-factory.js';
 import { LOADING_SECONDS } from '../constants.js';
 import { logger } from '../../../utils/logger.js';
 
@@ -44,7 +44,9 @@ export async function handleImageMessage(
     }
 
     const mimeType = 'image/jpeg';
-    const analysisResult = await geminiService.analyzeImage(base64Image, userText, mimeType);
+    const factory = getAIProviderFactory();
+    const aiProvider = factory.getProvider();
+    const analysisResult = await aiProvider.analyzeImage(base64Image, userText, mimeType);
 
     let conversation = await conversationService.getActiveConversation(userId);
     if (!conversation) {
@@ -105,7 +107,9 @@ export async function handleFileMessage(
       logger.warn('Failed to show loading animation for file', { err: e, userId });
     }
 
-    const analysisResult = await geminiService.analyzePDF(base64File, fileName);
+    const factory = getAIProviderFactory();
+    const aiProvider = factory.getProvider();
+    const analysisResult = await aiProvider.analyzePDF(base64File, fileName);
 
     let conversation = await conversationService.getActiveConversation(userId);
     if (!conversation) {

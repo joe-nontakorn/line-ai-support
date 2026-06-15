@@ -3,7 +3,7 @@ import { MessageAPIResponseBase } from '@line/bot-sdk';
 import { MessagingService } from '../messaging.js';
 import { ConversationService } from '../conversation.js';
 import { ConversationDoc } from '../types.js';
-import geminiService from '../../gemini.js';
+import { getAIProviderFactory } from '../../ai-provider-factory.js';
 import Ticket from '../../../models/Ticket.js';
 import Notification from '../../../models/Notification.js';
 import { logger } from '../../../utils/logger.js';
@@ -129,10 +129,12 @@ export async function escalateToSupport(
   const maybeHardware = isPrinter || isComputer || isOtherHw;
 
   // 2. 🧠 ดำเนินการวิเคราะห์ AI และ ดึงข้อมูล Asset ไปพร้อมๆ กัน (Parallel)
+  const factory = getAIProviderFactory();
+  const aiProvider = factory.getProvider();
   const [aiResult, assetResponse] = await Promise.all([
     // AI Analysis
     (isDirectEscalation && userMessages.length === 1 && text)
-      ? geminiService.categorizeIssue(text.trim()).then(res => ({ ...res, issueSummary: text.trim(), isITRelated: true, clarificationNeeded: null }))
+      ? aiProvider.categorizeIssue(text.trim()).then(res => ({ ...res, issueSummary: text.trim(), isITRelated: true, clarificationNeeded: null }))
       : conversationService.analyzeAndCategorizeSafe(conversationToUpdate.messages),
     // Asset Fetching
     maybeHardware
@@ -296,7 +298,7 @@ export async function escalateToSupport(
   // 🤖 Troubleshooting Advice
   const isClearEnough = issueSummary.length > 25 || issueSummary.includes('ชั้น') || issueSummary.includes('ที่');
   if (!isSkip && !isDirectEscalation && !isClearEnough && conversationToUpdate.status !== 'waiting_troubleshoot_confirm') {
-    const advice = await geminiService.getTroubleshootingAdvice(issueSummary);
+    const advice = await aiProvider.getTroubleshootingAdvice(issueSummary);
     conversationToUpdate.status = 'waiting_troubleshoot_confirm';
     conversationToUpdate.issue = issueSummary;
     await conversationToUpdate.save();
